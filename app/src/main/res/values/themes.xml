@@ -1,0 +1,7 @@
+<resources>
+    <style name="Theme.VibePlayer" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#07070D</item>
+        <item name="android:statusBarColor">#07070D</item>
+        <item name="android:navigationBarColor">#07070D</item>
+    </style>
+</resources>

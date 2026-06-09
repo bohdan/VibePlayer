@@ -1,0 +1,10 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- neon play triangle -->
+    <path android:fillColor="#3DDAD7"
+        android:pathData="M44,34 L78,54 L44,74 Z"/>
+    <!-- horizon line -->
+    <path android:strokeColor="#3DDAD7" android:strokeWidth="2"
+        android:pathData="M30,82 L78,82"/>
+</vector>
