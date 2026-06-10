@@ -117,12 +117,25 @@ const STATES = [
 ];
 
 const ch = (r, iv) => ({ r, iv });
-const m7 = [0,3,7,10], M7 = [0,4,7,11], M = [0,4,7], m = [0,3,7], sus2 = [0,2,7];
+const m7 = [0,3,7,10], M7 = [0,4,7,11], M = [0,4,7], m = [0,3,7], sus2 = [0,2,7], dom7 = [0,4,7,10];
 const PROG_BANDS = [
   [ [ch(45,m7),ch(41,M7),ch(48,M7),ch(43,M)], [ch(45,m7),ch(40,m7),ch(41,M7),ch(43,sus2)] ],
   [ [ch(45,m),ch(43,M),ch(41,M7),ch(48,M)],   [ch(45,m7),ch(41,M),ch(43,M),ch(40,m)] ],
   [ [ch(45,m),ch(48,M),ch(43,M),ch(41,M)],    [ch(45,m),ch(41,M),ch(48,M),ch(43,M)] ],
   [ [ch(45,m),ch(43,M),ch(41,M),ch(40,M)],    [ch(45,m),ch(48,M),ch(43,M),ch(40,M)] ],
+];
+
+// Baroque organ progressions in A harmonic minor.
+// V7 = ch(40, dom7) = E dominant-7th; the raised leading tone G# resolves to A.
+const BACH_PROGS = [
+  // Ground-bass descending: i - VII - VI - V  (Pachelbel / Baroque staple)
+  [ [ch(45,m),ch(43,M),ch(41,M),ch(40,M)],     [ch(45,m),ch(43,M),ch(40,M),ch(45,m)] ],
+  // Authentic cadence: i - iv - V7 - i
+  [ [ch(45,m),ch(38,m),ch(40,dom7),ch(45,m)],   [ch(45,m),ch(40,dom7),ch(38,m),ch(40,dom7)] ],
+  // Subdominant group: i - VI - III - VII
+  [ [ch(45,m),ch(41,M),ch(48,M),ch(43,M)],      [ch(45,m),ch(48,M),ch(41,M),ch(43,M)] ],
+  // Circle fragment: i - iv - VI - V7
+  [ [ch(45,m),ch(38,m),ch(41,M),ch(40,dom7)],   [ch(45,m),ch(41,M),ch(38,m),ch(40,dom7)] ],
 ];
 
 const LYDIAN_PROGS = [
@@ -154,6 +167,12 @@ const MODES = [
     leadSynth:"guitar",   cpSynth:"guitar",   arpSynth:"guitar",
     leadTypes:["sine"],   cpType:"sine",      padType:"sawtooth", padAtk:0.4,
     arpTypes:["sine"],    vibDepth:1, atk:0.002, dec:0.1 },
+  // A Harmonic Minor (raised 7th = G# = leading tone). Dominant V7 (E7) gives
+  // authentic cadences. Arp uses harpsichord (short organ bursts).
+  { key:"organ",   scale:[0,2,3,5,7,8,11], root:57, progBands:BACH_PROGS,
+    leadSynth:"organ",    cpSynth:"organ",    arpSynth:"harpsichord",
+    leadTypes:["sine"],   cpType:"sine",      padType:"sine",     padAtk:0.01,
+    arpTypes:["sine"],    vibDepth:0, atk:0.008, dec:0 },
 ];
 
 const mtof = (mid) => 440 * Math.pow(2, (mid - 69) / 12);
@@ -228,6 +247,27 @@ function fluteVoice(e, when, midi, dur, level, dest, vibNode) {
   noise.connect(bp); bp.connect(ng); ng.connect(dest);
   osc.start(when); osc.stop(when + dur + 0.05);
   noise.start(when); noise.stop(when + dur + 0.05);
+}
+
+// Pipe organ: additive sine synthesis (Principal chorus drawbars).
+// Box envelope with 8ms ramp to prevent clicks. No vibrato.
+function organVoice(e, when, midi, dur, level, dest) {
+  const freq = mtof(midi);
+  // 8' 4' 2⅔' 2' 1⅗' 1' (Principal + Nazard + Tierce)
+  const drawbars = [[1,0.70],[2,0.50],[3,0.22],[4,0.28],[5,0.10],[8,0.04]];
+  const g = e.ctx.createGain();
+  g.gain.setValueAtTime(0, when);
+  g.gain.linearRampToValueAtTime(level, when + 0.008);
+  g.gain.setValueAtTime(level, when + Math.max(dur - 0.008, 0.008));
+  g.gain.linearRampToValueAtTime(0, when + dur);
+  g.connect(dest);
+  drawbars.forEach(([ratio, amp]) => {
+    const osc = e.ctx.createOscillator(); osc.type = "sine";
+    osc.frequency.value = freq * ratio;
+    const pg = e.ctx.createGain(); pg.gain.value = amp;
+    osc.connect(pg); pg.connect(g);
+    osc.start(when); osc.stop(when + dur + 0.05);
+  });
 }
 
 // Guitar: resonant-filtered noise burst (pick attack) + decaying sine (body).
@@ -460,10 +500,11 @@ function bassNote(e, when, midi, dur, level) {
 function pluck(e, when, midi, dur, level, type) {
   if (midi > 78) level *= 0.65;
   const as = e.mode.arpSynth;
-  if (as === "fm-piano") return fmPianoVoice(e, when, midi, dur * 0.7, level, e.arpFilter, null);
-  if (as === "marimba")  return marimbaVoice(e, when, midi, dur, level, e.arpFilter);
-  if (as === "flute")    return fluteVoice(e, when, midi, dur * 0.8, level * 0.65, e.arpFilter, null);
-  if (as === "guitar")   return guitarVoice(e, when, midi, dur, level, e.arpFilter);
+  if (as === "fm-piano")     return fmPianoVoice(e, when, midi, dur * 0.7, level, e.arpFilter, null);
+  if (as === "marimba")      return marimbaVoice(e, when, midi, dur, level, e.arpFilter);
+  if (as === "flute")        return fluteVoice(e, when, midi, dur * 0.8, level * 0.65, e.arpFilter, null);
+  if (as === "guitar")       return guitarVoice(e, when, midi, dur, level, e.arpFilter);
+  if (as === "harpsichord")  return organVoice(e, when, midi, Math.min(dur, 0.14), level, e.arpFilter);
   const o = e.ctx.createOscillator(); o.type = type; o.frequency.value = mtof(midi);
   const g = e.ctx.createGain();
   g.gain.setValueAtTime(0.0001, when);
@@ -481,6 +522,7 @@ function leadNote(e, when, midi, dur, level, type) {
   if (ls === "marimba")  return marimbaVoice(e, when, midi, dur, level, e.leadFilter);
   if (ls === "flute")    return fluteVoice(e, when, midi, dur, level, e.leadFilter, e.vibGain);
   if (ls === "guitar")   return guitarVoice(e, when, midi, dur, level, e.leadFilter);
+  if (ls === "organ")    return organVoice(e, when, midi, dur, level, e.leadFilter);
   if (type === "square" && midi > 76) type = "triangle";
   const o = e.ctx.createOscillator(); o.type = type; o.frequency.value = mtof(midi);
   e.vibGain.connect(o.detune);
@@ -503,6 +545,7 @@ function cpNote(e, when, midi, dur, level) {
   if (cs === "marimba")  return marimbaVoice(e, when, midi, dur, lv, e.cpFilter);
   if (cs === "flute")    return fluteVoice(e, when, midi, dur, lv, e.cpFilter, e.vibGainCp);
   if (cs === "guitar")   return guitarVoice(e, when, midi, dur, lv, e.cpFilter);
+  if (cs === "organ")    return organVoice(e, when, midi, dur, lv, e.cpFilter);
   const o = e.ctx.createOscillator(); o.type = e.mode.cpType; o.frequency.value = mtof(midi);
   e.vibGainCp.connect(o.detune);
   const g = e.ctx.createGain();
@@ -516,6 +559,30 @@ function cpNote(e, when, midi, dur, level) {
 
 function padChord(e, when, chord, barDur, high) {
   const notes = high ? chord.iv.map((iv) => iv + 12) : chord.iv;
+  const pAtk = e.mode.padAtk;
+
+  if (e.mode.leadSynth === "organ") {
+    // Organ pad: additive chorus (8'+4'+2⅔') per chord note, no detuning
+    const lvl = (e.cur.pad * 0.055) / Math.sqrt(notes.length) * (high ? 0.7 : 1);
+    notes.forEach((iv) => {
+      const freq = mtof(chord.r + 12 + iv);
+      const g = e.ctx.createGain();
+      g.gain.setValueAtTime(0, when);
+      g.gain.linearRampToValueAtTime(lvl, when + pAtk);
+      g.gain.setValueAtTime(lvl, when + barDur - 0.01);
+      g.gain.linearRampToValueAtTime(0, when + barDur + 0.9);
+      g.connect(e.padFilter);
+      [[1,0.6],[2,0.35],[3,0.15]].forEach(([ratio, amp]) => {
+        const osc = e.ctx.createOscillator(); osc.type = "sine";
+        osc.frequency.value = freq * ratio;
+        const pg = e.ctx.createGain(); pg.gain.value = amp;
+        osc.connect(pg); pg.connect(g);
+        osc.start(when); osc.stop(when + barDur + 1.0);
+      });
+    });
+    return;
+  }
+
   notes.forEach((iv) => {
     [-6, 6].forEach((cents) => {
       const o = e.ctx.createOscillator(); o.type = e.mode.padType;
@@ -523,7 +590,6 @@ function padChord(e, when, chord, barDur, high) {
       o.detune.value = cents;
       const g = e.ctx.createGain();
       const lvl = (e.cur.pad * 0.08) / Math.sqrt(notes.length) * (high ? 0.7 : 1);
-      const pAtk = e.mode.padAtk;
       g.gain.setValueAtTime(0.0001, when);
       g.gain.linearRampToValueAtTime(lvl, when + pAtk);
       g.gain.setValueAtTime(lvl, when + barDur - Math.min(pAtk * 0.4, 0.8));
