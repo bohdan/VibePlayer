@@ -144,9 +144,15 @@ function createEngine(ctx, tierIdx, volume) {
   const arpFilter = mkFilter(1200, 4, arpBus);
   const leadFilter = mkFilter(1500, 1.5, leadBus);
 
+  // Counterpoint voice — triangle wave, lower register, light delay
+  const cpBus = bus(0.35);
+  const cpSend = bus(0.1, delayIn); cpBus.connect(cpSend);
+  const cpFilter = mkFilter(1100, 1.2, cpBus);
+
   const vib = ctx.createOscillator(); vib.frequency.value = 5.5;
   const vibGain = ctx.createGain(); vibGain.gain.value = 6;
-  vib.connect(vibGain); vib.start();
+  const vibGainCp = ctx.createGain(); vibGainCp.gain.value = 3;
+  vib.connect(vibGain); vib.connect(vibGainCp); vib.start();
 
   const noiseBuf = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
   const data = noiseBuf.getChannelData(0);
@@ -162,14 +168,34 @@ function createEngine(ctx, tierIdx, volume) {
 
   const t = STATES[tierIdx];
   const e = {
-    ctx, master, padBus, bassBus, arpBus, leadBus, drumBus, delay, noiseBuf, pump,
-    padFilter, bassFilter, arpFilter, leadFilter, vibGain,
+    ctx, master, padBus, bassBus, arpBus, leadBus, cpBus, drumBus, delay, noiseBuf, pump,
+    padFilter, bassFilter, arpFilter, leadFilter, cpFilter, vibGain, vibGainCp,
     cur: Object.assign({}, t), target: Object.assign({}, t),
     tierIdx, step: 0, nextTime: ctx.currentTime + 0.1,
-    arpIdx: 0, leadDeg: 7, lastBeatTime: 0, beatDur: 60 / t.bpm, section: null,
+    arpIdx: 0, leadDeg: 7, cpDeg: 3, prevLeadDir: 0,
+    lastBeatTime: 0, beatDur: 60 / t.bpm, section: null,
+    theme: Array(16).fill(null), recording: Array(16).fill(null),
   };
   rollSection(e, 0);
   return e;
+}
+
+// Apply a variation transform to a 16-step theme (array of degree|null).
+function applyThemeVar(theme, varType) {
+  if (varType === "literal") return [...theme];
+  if (varType === "transpose") {
+    const offset = pick([-3,-2,-1,1,2,3]);
+    return theme.map(d => d === null ? null : Math.max(0, Math.min(14, d + offset)));
+  }
+  if (varType === "invert") {
+    const vals = theme.filter(d => d !== null);
+    if (!vals.length) return [...theme];
+    const center = vals.reduce((a, b) => a + b, 0) / vals.length;
+    return theme.map(d => d === null ? null : Math.max(0, Math.min(14, Math.round(2 * center - d))));
+  }
+  if (varType === "retrograde") return [...theme].reverse();
+  if (varType === "diminish") { const h = theme.slice(0, 8); return [...h, ...h]; }
+  return [...theme];
 }
 
 function makeMotif(d) {
@@ -185,6 +211,18 @@ function makeMotif(d) {
 function rollSection(e, bar) {
   const d = e.target.density;
   const band = e.tierIdx <= 1 ? 0 : e.tierIdx <= 3 ? 1 : e.tierIdx <= 5 ? 2 : 3;
+
+  // Save what was played last section; decide variation type for this one.
+  e.theme = e.recording.slice();
+  e.recording = Array(16).fill(null);
+  const hasTheme = e.theme.some(d => d !== null);
+  const themeVar = !hasTheme || Math.random() < 0.35
+    ? "fresh"
+    : pick(["literal", "transpose", "invert", "retrograde", "diminish"]);
+  const themeDegrees = themeVar === "fresh"
+    ? Array(16).fill(null)
+    : applyThemeVar(e.theme, themeVar);
+
   e.section = {
     startBar: bar,
     prog: pick(PROG_BANDS[band]),
@@ -203,6 +241,10 @@ function rollSection(e, bar) {
     padOff: d > 0.6 && Math.random() < 0.2,
     fill: e.target.drums > 0.45 && Math.random() < 0.7,
     extraKick: e.target.drums > 0.7 && Math.random() < 0.45,
+    themeVar,
+    themeDegrees,
+    cpOn: Math.random() < (d < 0.3 ? 0.2 : 0.25 + d * 0.55),
+    cpOffset: Math.floor(Math.random() * 4),
   };
 }
 
@@ -290,6 +332,20 @@ function leadNote(e, when, midi, dur, level, type) {
   g.gain.setTargetAtTime(level * 0.6, when + 0.05, 0.08);
   g.gain.exponentialRampToValueAtTime(0.001, when + dur);
   o.connect(g); g.connect(e.leadFilter);
+  o.start(when); o.stop(when + dur + 0.05);
+}
+
+// Counterpoint voice: triangle wave, lower register, softer attack.
+function cpNote(e, when, midi, dur, level) {
+  midi = Math.min(Math.max(midi, 45), 72);
+  const o = e.ctx.createOscillator(); o.type = "triangle"; o.frequency.value = mtof(midi);
+  e.vibGainCp.connect(o.detune);
+  const g = e.ctx.createGain();
+  g.gain.setValueAtTime(0.0001, when);
+  g.gain.exponentialRampToValueAtTime(level, when + 0.04);
+  g.gain.setTargetAtTime(level * 0.5, when + 0.09, 0.1);
+  g.gain.exponentialRampToValueAtTime(0.001, when + dur);
+  o.connect(g); g.connect(e.cpFilter);
   o.start(when); o.stop(when + dur + 0.05);
 }
 
@@ -393,13 +449,44 @@ function scheduleStep(e) {
           (0.1 + Math.min(d, 1) * 0.09) * vel(), e.section.arpType);
   }
 
-  if (e.section.leadOn && e.section.motif[s]) {
+  // Lead: theme variation sections use stored degrees; fresh sections random-walk and record.
+  const themeHit = e.section.themeVar !== "fresh" && e.section.themeDegrees[s] !== null;
+  const freeHit  = e.section.themeVar === "fresh" && e.section.leadOn && e.section.motif[s];
+  if (themeHit || freeHit) {
     const playProb = lastBarOfSection && s > 8 ? 0.6 : 1;
     if (Math.random() < playProb) {
-      e.leadDeg = nextLeadDegree(e, chord, s);
+      const prevDeg = e.leadDeg;
+      if (themeHit) {
+        e.leadDeg = e.section.themeDegrees[s];
+      } else {
+        e.leadDeg = nextLeadDegree(e, chord, s);
+        e.recording[s] = e.leadDeg; // record for next section's theme
+      }
+      e.prevLeadDir = Math.sign(e.leadDeg - prevDeg);
       const midi = degToMidi(e.leadDeg) + e.section.leadOctave;
       const len = Math.random() < 0.25 ? stepDur * 3.5 : stepDur * 1.7;
       leadNote(e, when + jit(), midi, len, 0.11 * vel(), e.section.leadType);
+    }
+  }
+
+  // Counterpoint: contrary motion, lower register (degrees 0-6), staggered offset.
+  if (e.section.cpOn) {
+    const cpRate = d < 0.4 ? 8 : d < 0.7 ? 4 : 2;
+    if ((s + e.section.cpOffset) % cpRate === 0) {
+      const dir = e.prevLeadDir || (Math.random() < 0.5 ? 1 : -1);
+      e.cpDeg = Math.max(0, Math.min(6, e.cpDeg - dir * pick([1, 1, 2])));
+      // Occasionally snap to a chord tone in the lower register
+      if (Math.random() < 0.35) {
+        const target = (chord.r + pick(chord.iv)) % 12;
+        let best = e.cpDeg, bestDist = 99;
+        for (let deg = 0; deg <= 6; deg++) {
+          const dist = Math.abs(degToMidi(deg) % 12 - target);
+          if (dist < bestDist) { bestDist = dist; best = deg; }
+        }
+        e.cpDeg = best;
+      }
+      const cpLen = d < 0.5 ? stepDur * cpRate * 0.85 : stepDur * 2.5;
+      cpNote(e, when + jit(), degToMidi(e.cpDeg), cpLen, (0.065 + d * 0.025) * vel());
     }
   }
 
