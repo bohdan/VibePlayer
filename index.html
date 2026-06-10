@@ -216,7 +216,8 @@ function applyThemeVar(theme, varType) {
 function makeMotif(d) {
   const mArr = Array(16).fill(false);
   for (let i = 0; i < 16; i++) {
-    const p = i % 4 === 0 ? 0.6 : i % 2 === 0 ? 0.3 + d * 0.3 : d * 0.22;
+    // Sparser than before so long sustained notes don't pile up and muddy.
+    const p = i % 4 === 0 ? 0.5 : i % 2 === 0 ? 0.14 + d * 0.18 : d * 0.09;
     mArr[i] = Math.random() < p;
   }
   mArr[0] = true;
@@ -231,9 +232,12 @@ function rollSection(e, bar) {
   e.theme = e.recording.slice();
   e.recording = Array(16).fill(null);
   const hasTheme = e.theme.some(d => d !== null);
-  const themeVar = !hasTheme || Math.random() < 0.35
+  // Lower fresh probability and weight toward literal so motifs repeat
+  // and develop before the engine introduces genuinely new material.
+  // "diminish" is removed — it shortens phrases, opposite of the goal.
+  const themeVar = !hasTheme || Math.random() < 0.22
     ? "fresh"
-    : pick(["literal", "transpose", "invert", "retrograde", "diminish"]);
+    : pick(["literal", "literal", "transpose", "invert", "retrograde"]);
   const themeDegrees = themeVar === "fresh"
     ? Array(16).fill(null)
     : applyThemeVar(e.theme, themeVar);
@@ -419,13 +423,13 @@ function scheduleStep(e) {
   e.padFilter.frequency.setTargetAtTime(500 + e.cur.cutoff * 0.4, when, 0.1);
 
   if (s === 0) {
-    if (bar % 4 === 0 && bar !== e.section.startBar) rollSection(e, bar);
+    if (bar % 8 === 0 && bar !== e.section.startBar) rollSection(e, bar);
     e.chord = e.section.prog[bar % 4];
     if (!e.section.padOff) padChord(e, when, e.chord, stepDur * 16, e.section.padHigh);
     e.delay.delayTime.setTargetAtTime((60 / e.cur.bpm) * 0.75, when, 0.5);
   }
   const chord = e.chord || PROG_BANDS[0][0][0];
-  const lastBarOfSection = bar % 4 === 3;
+  const lastBarOfSection = bar % 8 === 7;
 
   let bassOn = false, bassMidi = chord.r - 12, bassDur = stepDur * 1.8;
   switch (e.section.bassMode) {
@@ -479,7 +483,9 @@ function scheduleStep(e) {
       }
       e.prevLeadDir = Math.sign(e.leadDeg - prevDeg);
       const midi = degToMidi(e.leadDeg) + e.section.leadOctave;
-      const len = Math.random() < 0.25 ? stepDur * 3.5 : stepDur * 1.7;
+      const len = Math.random() < 0.2 ? stepDur * 14
+                : Math.random() < 0.5 ? stepDur * 8
+                : stepDur * 5;
       leadNote(e, when + jit(), midi, len, 0.11 * vel(), e.section.leadType);
     }
   }
@@ -500,7 +506,7 @@ function scheduleStep(e) {
         }
         e.cpDeg = best;
       }
-      const cpLen = d < 0.5 ? stepDur * cpRate * 0.85 : stepDur * 2.5;
+      const cpLen = d < 0.5 ? stepDur * cpRate * 1.6 : stepDur * 6;
       cpNote(e, when + jit(), degToMidi(e.cpDeg), cpLen, (0.065 + d * 0.025) * vel());
     }
   }
