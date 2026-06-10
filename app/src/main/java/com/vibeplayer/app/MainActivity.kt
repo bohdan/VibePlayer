@@ -58,7 +58,7 @@ class MainActivity : ComponentActivity() {
 
         @JavascriptInterface
         fun setGoMode(active: Boolean) {
-            PaceBus.setGoMode(active)
+            PaceBus.goMode = active
         }
     }
 
@@ -68,7 +68,7 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         MediaCommandBus.listener = null
         PaceBus.paceTierChanged = null
-        PaceBus.setGoMode(false)
+        PaceBus.goMode = false
         stopService(Intent(this, PlaybackService::class.java))
         webView.destroy()
         super.onDestroy()
