@@ -60,7 +60,8 @@ class PlaybackService : Service() {
                 rms < 3.2f  -> 3   // jog / easy bike
                 rms < 5.5f  -> 4   // run / moderate bike
                 rms < 8.0f  -> 5   // hard run
-                else        -> 6   // sprint
+                rms < 11.5f -> 6   // sprint
+                else        -> 7   // meltdown
             }
 
             // Require 4 consecutive readings (≈1.3 s) before committing to a tier change

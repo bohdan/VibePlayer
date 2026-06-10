@@ -104,6 +104,7 @@ const STATES = [
   { key: "surge",  track: "Overdrive Sky",  bpm: 134, density: 0.86, drums: 0.90, bass: 0.72, pad: 0.30, cutoff: 3800, hue: 330 },
   { key: "crisis", track: "Red Sector",     bpm: 152, density: 1.00, drums: 1.00, bass: 0.80, pad: 0.28, cutoff: 5200, hue: 360 },
   { key: "overload", track: "Terminal Velocity", bpm: 172, density: 1.15, drums: 1.15, bass: 0.88, pad: 0.24, cutoff: 4600, hue: 385 },
+  { key: "meltdown", track: "Singularity",        bpm: 195, density: 1.32, drums: 1.32, bass: 0.96, pad: 0.18, cutoff: 3400, hue: 10  },
 ];
 
 const ch = (r, iv) => ({ r, iv });
@@ -547,7 +548,7 @@ let hue = STATES[0].hue;
 const $ = (id) => document.getElementById(id);
 const scene = $("scene"), playBtn = $("playBtn");
 
-const PACE_NAMES = ["still", "walking", "brisk walk", "jogging", "running", "hard run", "sprint"];
+const PACE_NAMES = ["still", "walking", "brisk walk", "jogging", "running", "hard run", "sprint", "meltdown"];
 
 // Called by Android when the accelerometer-derived pace tier changes.
 function onPaceTier(tier) {
