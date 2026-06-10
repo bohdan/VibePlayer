@@ -30,6 +30,12 @@ class MainActivity : ComponentActivity() {
             loadUrl("file:///android_asset/index.html")
         }
         setContentView(webView)
+
+        // BT headset / remote-control buttons, relayed from the MediaSession
+        // in PlaybackService.
+        MediaCommandBus.listener = { cmd ->
+            runOnUiThread { webView.evaluateJavascript("mediaCommand('$cmd')", null) }
+        }
     }
 
     inner class Bridge {
@@ -51,6 +57,7 @@ class MainActivity : ComponentActivity() {
     // webView.onPause() would suspend timers and kill audio in the background.
 
     override fun onDestroy() {
+        MediaCommandBus.listener = null
         stopService(Intent(this, PlaybackService::class.java))
         webView.destroy()
         super.onDestroy()

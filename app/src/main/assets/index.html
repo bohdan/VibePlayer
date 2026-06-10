@@ -494,6 +494,16 @@ function pumpScheduler() {
 // kicks in, so the deeper hidden lookahead is already in place.
 document.addEventListener("visibilitychange", pumpScheduler);
 
+// Media-button commands relayed from the Android MediaSession (BT headsets).
+function mediaCommand(cmd) {
+  switch (cmd) {
+    case "play":  if (!playing) playBtn.click(); break;
+    case "pause": if (playing) playBtn.click(); break;
+    case "next":  urgency = Math.min(5, urgency + 1); update(); break;
+    case "prev":  urgency = Math.max(1, urgency - 1); update(); break;
+  }
+}
+
 function notifyNative(isPlaying) {
   if (window.AndroidBridge && window.AndroidBridge.setPlaying) {
     window.AndroidBridge.setPlaying(isPlaying);
