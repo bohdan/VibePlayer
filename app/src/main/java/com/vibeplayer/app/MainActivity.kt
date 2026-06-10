@@ -36,6 +36,10 @@ class MainActivity : ComponentActivity() {
         MediaCommandBus.listener = { cmd ->
             runOnUiThread { webView.evaluateJavascript("mediaCommand('$cmd')", null) }
         }
+
+        PaceBus.paceTierChanged = { tier ->
+            runOnUiThread { webView.evaluateJavascript("onPaceTier($tier)", null) }
+        }
     }
 
     inner class Bridge {
@@ -51,6 +55,11 @@ class MainActivity : ComponentActivity() {
                 stopService(intent)
             }
         }
+
+        @JavascriptInterface
+        fun setGoMode(active: Boolean) {
+            PaceBus.setGoMode(active)
+        }
     }
 
     // Intentionally NOT forwarding onPause() to the WebView:
@@ -58,6 +67,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         MediaCommandBus.listener = null
+        PaceBus.paceTierChanged = null
+        PaceBus.setGoMode(false)
         stopService(Intent(this, PlaybackService::class.java))
         webView.destroy()
         super.onDestroy()

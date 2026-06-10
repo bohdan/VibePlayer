@@ -42,10 +42,20 @@
   .row { display: flex; flex-direction: column; align-items: center; gap: 12px; }
   .label { font-size: 10px; letter-spacing: 0.3em; text-transform: uppercase; color: #6d6a80;
     margin-left: 0.3em; /* offset trailing letter-spacing so text is optically centred */ }
+  .stepper-wrap { display: flex; align-items: center; gap: 16px; }
   .stepper { display: flex; align-items: center; gap: 14px; }
   .stepper button { width: 40px; height: 40px; border-radius: 8px;
     border: 1px solid #2c2a3a; background: transparent; color: #b9b6c9; font-size: 18px; }
+  .stepper button:disabled { opacity: 0.28; cursor: default; }
   .count { font-size: 22px; min-width: 2ch; color: #e8e6f0; }
+  .go-btn { font-family: inherit; font-size: 9px; letter-spacing: 0.28em; text-transform: uppercase;
+    padding: 0 14px; height: 40px; border-radius: 20px;
+    border: 1px solid #2c2a3a; background: transparent; color: #6d6a80; cursor: pointer;
+    transition: border-color 0.3s, color 0.3s, box-shadow 0.3s; }
+  .go-btn.active { border-color: var(--accent); color: var(--accent);
+    box-shadow: 0 0 10px hsla(var(--hue), 90%, 60%, 0.3); }
+  .pace-hint { font-size: 9.5px; letter-spacing: 0.22em; text-transform: uppercase;
+    color: var(--accent); min-height: 1.2em; }
   input[type="range"] { -webkit-appearance: none; appearance: none;
     width: 150px; height: 2px; background: #2c2a3a; border-radius: 2px; }
   input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none;
@@ -65,11 +75,15 @@
     <button class="play" id="playBtn" aria-label="Play">&#9654;</button>
     <div class="row">
       <span class="label">urgency</span>
-      <div class="stepper">
-        <button id="urgMinus" aria-label="Decrease urgency">&minus;</button>
-        <span class="count" id="urgCount">0</span>
-        <button id="urgPlus" aria-label="Increase urgency">+</button>
+      <div class="stepper-wrap">
+        <div class="stepper">
+          <button id="urgMinus" aria-label="Decrease urgency">&minus;</button>
+          <span class="count" id="urgCount">0</span>
+          <button id="urgPlus" aria-label="Increase urgency">+</button>
+        </div>
+        <button class="go-btn" id="goBtn" aria-label="Toggle on the go mode">go</button>
       </div>
+      <span class="pace-hint" id="paceHint"></span>
     </div>
     <div class="row">
       <span class="label">volume</span>
@@ -527,10 +541,21 @@ function scheduleStep(e) {
 // ============================================================================
 let engine = null, timer = null, playing = false;
 let urgency = 0, volume = 0.7; // urgency maps directly onto STATES tiers
+let goMode = false;
 let hue = STATES[0].hue;
 
 const $ = (id) => document.getElementById(id);
 const scene = $("scene"), playBtn = $("playBtn");
+
+const PACE_NAMES = ["still", "walking", "brisk walk", "jogging", "running", "hard run", "sprint"];
+
+// Called by Android when the accelerometer-derived pace tier changes.
+function onPaceTier(tier) {
+  if (!goMode) return;
+  urgency = tier;
+  update();
+  $("paceHint").textContent = "◉ " + PACE_NAMES[tier];
+}
 
 function pumpScheduler() {
   if (!engine || !playing) return;
@@ -583,6 +608,15 @@ function update() {
 
 $("urgMinus").addEventListener("click", () => { urgency = Math.max(0, urgency - 1); update(); });
 $("urgPlus").addEventListener("click", () => { urgency = Math.min(STATES.length - 1, urgency + 1); update(); });
+
+$("goBtn").addEventListener("click", () => {
+  goMode = !goMode;
+  $("goBtn").classList.toggle("active", goMode);
+  $("urgMinus").disabled = goMode;
+  $("urgPlus").disabled = goMode;
+  $("paceHint").textContent = goMode ? "◎ calibrating…" : "";
+  if (window.AndroidBridge?.setGoMode) window.AndroidBridge.setGoMode(goMode);
+});
 $("volume").addEventListener("input", (ev) => {
   volume = parseFloat(ev.target.value);
   if (engine) engine.master.gain.setTargetAtTime(volume * 0.8, engine.ctx.currentTime, 0.1);
