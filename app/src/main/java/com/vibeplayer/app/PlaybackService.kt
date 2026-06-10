@@ -7,6 +7,8 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.media.session.MediaSession
+import android.media.session.PlaybackState
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
@@ -20,6 +22,7 @@ import android.os.PowerManager
 class PlaybackService : Service() {
 
     private var wakeLock: PowerManager.WakeLock? = null
+    private var session: MediaSession? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -29,6 +32,17 @@ class PlaybackService : Service() {
             NotificationManager.IMPORTANCE_LOW
         )
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+
+        // Receives media buttons from BT headsets (and other remote controls)
+        // while the service is in the foreground, i.e. while music plays.
+        session = MediaSession(this, "VibePlayer").apply {
+            setCallback(object : MediaSession.Callback() {
+                override fun onPlay() = MediaCommandBus.send("play")
+                override fun onPause() = MediaCommandBus.send("pause")
+                override fun onSkipToNext() = MediaCommandBus.send("next")
+                override fun onSkipToPrevious() = MediaCommandBus.send("prev")
+            })
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -51,14 +65,34 @@ class PlaybackService : Service() {
             startForeground(NOTIF_ID, notification)
         }
 
-        wakeLock = (getSystemService(POWER_SERVICE) as PowerManager)
-            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "VibePlayer:playback")
-            .apply { acquire() }
+        session?.apply {
+            setPlaybackState(
+                PlaybackState.Builder()
+                    .setActions(
+                        PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or
+                        PlaybackState.ACTION_PLAY_PAUSE or
+                        PlaybackState.ACTION_SKIP_TO_NEXT or
+                        PlaybackState.ACTION_SKIP_TO_PREVIOUS
+                    )
+                    .setState(PlaybackState.STATE_PLAYING, PlaybackState.PLAYBACK_POSITION_UNKNOWN, 1f)
+                    .build()
+            )
+            isActive = true
+        }
+
+        // onStartCommand can run more than once per service lifetime; creating a
+        // fresh lock each time would orphan the previous one while it's still held.
+        if (wakeLock?.isHeld != true) {
+            wakeLock = (getSystemService(POWER_SERVICE) as PowerManager)
+                .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "VibePlayer:playback")
+                .apply { acquire() }
+        }
 
         return START_STICKY
     }
 
     override fun onDestroy() {
+        session?.release()
         wakeLock?.let { if (it.isHeld) it.release() }
         super.onDestroy()
     }

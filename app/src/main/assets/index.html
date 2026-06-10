@@ -40,17 +40,14 @@
     box-shadow: 0 0 calc(var(--glow) * 60px) hsla(var(--hue), 90%, 60%, 0.45);
     display: flex; align-items: center; justify-content: center; }
   .row { display: flex; align-items: center; gap: 18px; }
+  /* balance the label so the control itself sits dead-centre in the panel */
+  .row::after { content: ""; width: 72px; }
   .label { font-size: 10px; letter-spacing: 0.3em; text-transform: uppercase; color: #6d6a80;
     width: 72px; text-align: right; }
   .stepper { display: flex; align-items: center; gap: 14px; }
   .stepper button { width: 40px; height: 40px; border-radius: 8px;
     border: 1px solid #2c2a3a; background: transparent; color: #b9b6c9; font-size: 18px; }
   .count { font-size: 22px; min-width: 2ch; color: #e8e6f0; }
-  .dots { display: flex; gap: 12px; }
-  .dot { width: 18px; height: 18px; border-radius: 50%;
-    border: 1px solid #3a3850; background: transparent; padding: 0; }
-  .dot.on { background: var(--accent); border-color: var(--accent);
-    box-shadow: 0 0 8px hsla(var(--hue), 90%, 60%, 0.7); }
   input[type="range"] { -webkit-appearance: none; appearance: none;
     width: 150px; height: 2px; background: #2c2a3a; border-radius: 2px; }
   input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none;
@@ -69,16 +66,12 @@
     </div>
     <button class="play" id="playBtn" aria-label="Play">&#9654;</button>
     <div class="row">
-      <span class="label">tasks</span>
-      <div class="stepper">
-        <button id="taskMinus" aria-label="Remove task">&minus;</button>
-        <span class="count" id="taskCount">0</span>
-        <button id="taskPlus" aria-label="Add task">+</button>
-      </div>
-    </div>
-    <div class="row">
       <span class="label">urgency</span>
-      <div class="dots" id="dots"></div>
+      <div class="stepper">
+        <button id="urgMinus" aria-label="Decrease urgency">&minus;</button>
+        <span class="count" id="urgCount">0</span>
+        <button id="urgPlus" aria-label="Increase urgency">+</button>
+      </div>
     </div>
     <div class="row">
       <span class="label">volume</span>
@@ -115,17 +108,6 @@ const mtof = (mid) => 440 * Math.pow(2, (mid - 69) / 12);
 const lerp = (a, b, t) => a + (b - a) * t;
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 const degToMidi = (deg) => 57 + 12 * Math.floor(deg / 7) + SCALE[((deg % 7) + 7) % 7];
-
-function tierForLoad(tasks, urgency) {
-  if (tasks === 0) return 0;
-  const score = tasks + (urgency - 1) * 2;
-  if (score <= 2) return 1;
-  if (score <= 5) return 2;
-  if (score <= 8) return 3;
-  if (score <= 11) return 4;
-  if (score <= 15) return 5;
-  return 6;
-}
 
 // ============================================================================
 // Procedural synthwave engine (Web Audio) — same engine as the web version:
@@ -172,9 +154,17 @@ function createEngine(ctx, tierIdx, volume) {
   const data = noiseBuf.getChannelData(0);
   for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
 
+  // Scheduler pump driven by audio callbacks. Unlike setInterval — which the
+  // WebView throttles to 1Hz or less once the app is backgrounded — these
+  // keep firing for as long as the context is running.
+  const pump = ctx.createScriptProcessor(16384, 1, 1);
+  pump.onaudioprocess = () => pumpScheduler();
+  const pumpMute = ctx.createGain(); pumpMute.gain.value = 0;
+  pump.connect(pumpMute); pumpMute.connect(ctx.destination);
+
   const t = STATES[tierIdx];
   const e = {
-    ctx, master, padBus, bassBus, arpBus, leadBus, drumBus, delay, noiseBuf,
+    ctx, master, padBus, bassBus, arpBus, leadBus, drumBus, delay, noiseBuf, pump,
     padFilter, bassFilter, arpFilter, leadFilter, vibGain,
     cur: Object.assign({}, t), target: Object.assign({}, t),
     tierIdx, step: 0, nextTime: ctx.currentTime + 0.1,
@@ -451,18 +441,41 @@ function scheduleStep(e) {
 // UI wiring
 // ============================================================================
 let engine = null, timer = null, playing = false;
-let tasks = 0, urgency = 1, volume = 0.7;
+let urgency = 0, volume = 0.7; // urgency maps directly onto STATES tiers
 let hue = STATES[0].hue;
 
 const $ = (id) => document.getElementById(id);
-const scene = $("scene"), playBtn = $("playBtn"), dotsBox = $("dots");
+const scene = $("scene"), playBtn = $("playBtn");
 
-for (let n = 1; n <= 5; n++) {
-  const b = document.createElement("button");
-  b.className = "dot" + (n === 1 ? " on" : "");
-  b.setAttribute("aria-label", "Urgency " + n + " of 5");
-  b.addEventListener("click", () => { urgency = n; update(); });
-  dotsBox.appendChild(b);
+function pumpScheduler() {
+  if (!engine || !playing) return;
+  const ctx = engine.ctx;
+  // If we stalled long enough for the schedule to fall behind (timer
+  // throttling, GC pause), skip the missed steps. Scheduling them at past
+  // timestamps would fire them all simultaneously as a burst of noise.
+  if (engine.nextTime < ctx.currentTime) {
+    const stepDur = 60 / engine.cur.bpm / 4;
+    const missed = Math.ceil((ctx.currentTime - engine.nextTime) / stepDur);
+    engine.step += missed;
+    engine.nextTime += missed * stepDur;
+  }
+  // Deeper lookahead while hidden: wakeups are sparse and jittery there.
+  const ahead = document.hidden ? 4 : 1.5;
+  while (engine.nextTime < ctx.currentTime + ahead) scheduleStep(engine);
+}
+
+// Top up the schedule the moment we go to the background, before throttling
+// kicks in, so the deeper hidden lookahead is already in place.
+document.addEventListener("visibilitychange", pumpScheduler);
+
+// Media-button commands relayed from the Android MediaSession (BT headsets).
+function mediaCommand(cmd) {
+  switch (cmd) {
+    case "play":  if (!playing) playBtn.click(); break;
+    case "pause": if (playing) playBtn.click(); break;
+    case "next":  urgency = Math.min(STATES.length - 1, urgency + 1); update(); break;
+    case "prev":  urgency = Math.max(0, urgency - 1); update(); break;
+  }
 }
 
 function notifyNative(isPlaying) {
@@ -472,21 +485,19 @@ function notifyNative(isPlaying) {
 }
 
 function update() {
-  const tier = tierForLoad(tasks, urgency);
-  const st = STATES[tier];
+  const st = STATES[urgency];
   $("vibeName").textContent = st.key;
   $("trackName").textContent = st.track;
   $("trackSub").textContent = "procedural synthwave \u00B7 " + st.bpm + " bpm";
-  $("taskCount").textContent = tasks;
-  [...dotsBox.children].forEach((dot, i) => dot.classList.toggle("on", i < urgency));
+  $("urgCount").textContent = urgency;
   if (engine) {
     engine.target = Object.assign({}, st);
-    engine.tierIdx = tier;
+    engine.tierIdx = urgency;
   }
 }
 
-$("taskMinus").addEventListener("click", () => { tasks = Math.max(0, tasks - 1); update(); });
-$("taskPlus").addEventListener("click", () => { tasks = Math.min(20, tasks + 1); update(); });
+$("urgMinus").addEventListener("click", () => { urgency = Math.max(0, urgency - 1); update(); });
+$("urgPlus").addEventListener("click", () => { urgency = Math.min(STATES.length - 1, urgency + 1); update(); });
 $("volume").addEventListener("input", (ev) => {
   volume = parseFloat(ev.target.value);
   if (engine) engine.master.gain.setTargetAtTime(volume * 0.8, engine.ctx.currentTime, 0.1);
@@ -495,16 +506,15 @@ $("volume").addEventListener("input", (ev) => {
 playBtn.addEventListener("click", () => {
   if (!engine) {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    engine = createEngine(ctx, tierForLoad(tasks, urgency), volume);
+    engine = createEngine(ctx, urgency, volume);
   }
   if (!playing) {
     engine.ctx.resume();
     engine.nextTime = Math.max(engine.nextTime, engine.ctx.currentTime + 0.08);
-    // Deep lookahead: survives timer throttling when screen is off / app backgrounded
-    timer = setInterval(() => {
-      while (engine.nextTime < engine.ctx.currentTime + 1.5) scheduleStep(engine);
-    }, 100);
     playing = true;
+    pumpScheduler();
+    // Foreground tick; in the background the ScriptProcessor pump takes over.
+    timer = setInterval(pumpScheduler, 100);
     playBtn.innerHTML = "&#10074;&#10074;";
     playBtn.setAttribute("aria-label", "Pause");
     notifyNative(true);
@@ -520,7 +530,7 @@ playBtn.addEventListener("click", () => {
 
 // ambient visuals: hue glide + subtle beat pulse
 (function loop() {
-  const targetHue = engine ? engine.cur.hue : STATES[tierForLoad(tasks, urgency)].hue;
+  const targetHue = engine ? engine.cur.hue : STATES[urgency].hue;
   hue = lerp(hue, targetHue, 0.04);
   let glow = 0.35;
   if (engine && playing) {
