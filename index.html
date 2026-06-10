@@ -133,21 +133,27 @@ const LYDIAN_PROGS = [
 ];
 
 const MODES = [
+  // leadSynth/cpSynth/arpSynth: "osc" | "fm-piano" | "marimba" | "flute" | "guitar"
   { key:"synth",   scale:[0,2,3,5,7,8,10], root:57, progBands:PROG_BANDS,
-    leadTypes:["sawtooth","triangle","square"], cpType:"triangle", padType:"sawtooth",
+    leadSynth:"osc",      cpSynth:"osc",      arpSynth:"osc",
+    leadTypes:["sawtooth","triangle","square"], cpType:"triangle", padType:"sawtooth", padAtk:0.7,
     arpTypes:["square","sawtooth","triangle"], vibDepth:6, atk:0.015, dec:0.08 },
-  { key:"orbital", scale:[0,2,3,5,7,9,10], root:57, progBands:PROG_BANDS,
-    leadTypes:["triangle","triangle","sine"], cpType:"sine", padType:"sawtooth",
-    arpTypes:["triangle","sine"], vibDepth:3, atk:0.04, dec:0.14 },
-  { key:"dark",    scale:[0,1,3,5,7,8,10], root:57, progBands:PROG_BANDS,
-    leadTypes:["square","square","sawtooth"], cpType:"square", padType:"sawtooth",
-    arpTypes:["square","sawtooth"], vibDepth:9, atk:0.006, dec:0.05 },
-  { key:"dream",   scale:[0,2,4,6,7,9,11], root:60, progBands:LYDIAN_PROGS,
-    leadTypes:["sine","triangle","triangle"], cpType:"sine", padType:"sine",
-    arpTypes:["triangle","sine"], vibDepth:2, atk:0.06, dec:0.18 },
-  { key:"tension", scale:[0,2,3,5,7,8,11], root:57, progBands:PROG_BANDS,
-    leadTypes:["square","sawtooth","triangle"], cpType:"triangle", padType:"sawtooth",
-    arpTypes:["square","sawtooth"], vibDepth:7, atk:0.009, dec:0.06 },
+  { key:"piano",   scale:[0,2,3,5,7,8,10], root:57, progBands:PROG_BANDS,
+    leadSynth:"fm-piano", cpSynth:"fm-piano", arpSynth:"fm-piano",
+    leadTypes:["sine"],   cpType:"sine",      padType:"sine",     padAtk:0.9,
+    arpTypes:["sine"],    vibDepth:1.5, atk:0.003, dec:0.2 },
+  { key:"marimba", scale:[0,2,4,7,9],       root:57, progBands:PROG_BANDS,
+    leadSynth:"marimba",  cpSynth:"marimba",  arpSynth:"marimba",
+    leadTypes:["sine"],   cpType:"sine",      padType:"sine",     padAtk:0.15,
+    arpTypes:["sine"],    vibDepth:0.5, atk:0.001, dec:0.05 },
+  { key:"flute",   scale:[0,2,4,6,7,9,11], root:60, progBands:LYDIAN_PROGS,
+    leadSynth:"flute",    cpSynth:"flute",    arpSynth:"flute",
+    leadTypes:["sine"],   cpType:"sine",      padType:"sine",     padAtk:1.2,
+    arpTypes:["sine"],    vibDepth:5, atk:0.07, dec:0.2 },
+  { key:"guitar",  scale:[0,2,3,5,7,8,10], root:57, progBands:PROG_BANDS,
+    leadSynth:"guitar",   cpSynth:"guitar",   arpSynth:"guitar",
+    leadTypes:["sine"],   cpType:"sine",      padType:"sawtooth", padAtk:0.4,
+    arpTypes:["sine"],    vibDepth:1, atk:0.002, dec:0.1 },
 ];
 
 const mtof = (mid) => 440 * Math.pow(2, (mid - 69) / 12);
@@ -156,6 +162,90 @@ const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 function degToMidi(deg, scale, root) {
   const n = scale.length;
   return root + 12 * Math.floor(deg / n) + scale[((deg % n) + n) % n];
+}
+
+// ============================================================================
+// Instrument synthesis voices
+// ============================================================================
+
+// FM piano: high mod-index decays fast → bright hammer attack, pure sine tail.
+function fmPianoVoice(e, when, midi, dur, level, dest, vibNode) {
+  const freq = mtof(midi);
+  const car = e.ctx.createOscillator(); car.type = "sine"; car.frequency.value = freq;
+  const mod = e.ctx.createOscillator(); mod.type = "sine"; mod.frequency.value = freq * 2;
+  if (vibNode) vibNode.connect(car.detune);
+  const mGain = e.ctx.createGain();
+  mGain.gain.setValueAtTime(freq * 10, when);
+  mGain.gain.exponentialRampToValueAtTime(freq * 0.3, when + 0.2);
+  mGain.gain.exponentialRampToValueAtTime(0.01, when + Math.min(dur * 0.6, 0.8));
+  mod.connect(mGain); mGain.connect(car.frequency);
+  const g = e.ctx.createGain();
+  g.gain.setValueAtTime(0.0001, when);
+  g.gain.exponentialRampToValueAtTime(level, when + 0.003);
+  g.gain.exponentialRampToValueAtTime(level * 0.25, when + 0.1);
+  g.gain.exponentialRampToValueAtTime(0.001, when + dur);
+  car.connect(g); g.connect(dest);
+  mod.start(when); car.start(when);
+  mod.stop(when + dur + 0.05); car.stop(when + dur + 0.05);
+}
+
+// Marimba: FM with ~3.5× mod ratio gives woody mallet click, fast decay.
+function marimbaVoice(e, when, midi, dur, level, dest) {
+  const freq = mtof(midi);
+  const car = e.ctx.createOscillator(); car.type = "sine"; car.frequency.value = freq;
+  const mod = e.ctx.createOscillator(); mod.type = "sine"; mod.frequency.value = freq * 3.5;
+  const mGain = e.ctx.createGain();
+  mGain.gain.setValueAtTime(freq * 2.5, when);
+  mGain.gain.exponentialRampToValueAtTime(0.01, when + 0.06);
+  mod.connect(mGain); mGain.connect(car.frequency);
+  const decay = Math.min(dur, 0.5);
+  const g = e.ctx.createGain();
+  g.gain.setValueAtTime(0.0001, when);
+  g.gain.exponentialRampToValueAtTime(level, when + 0.001);
+  g.gain.exponentialRampToValueAtTime(0.001, when + decay);
+  car.connect(g); g.connect(dest);
+  mod.start(when); car.start(when);
+  mod.stop(when + decay + 0.05); car.stop(when + decay + 0.05);
+}
+
+// Flute: sine fundamental with breathiness from bandpass noise mixed in.
+function fluteVoice(e, when, midi, dur, level, dest, vibNode) {
+  const freq = mtof(midi);
+  const osc = e.ctx.createOscillator(); osc.type = "sine"; osc.frequency.value = freq;
+  if (vibNode) vibNode.connect(osc.detune);
+  const g = e.ctx.createGain();
+  g.gain.setValueAtTime(0.0001, when);
+  g.gain.linearRampToValueAtTime(level, when + 0.07);
+  g.gain.exponentialRampToValueAtTime(0.001, when + dur);
+  osc.connect(g); g.connect(dest);
+  const noise = e.ctx.createBufferSource(); noise.buffer = e.noiseBuf; noise.loop = true;
+  const bp = e.ctx.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.value = freq * 1.7; bp.Q.value = 1.8;
+  const ng = e.ctx.createGain();
+  ng.gain.setValueAtTime(0.0001, when);
+  ng.gain.linearRampToValueAtTime(level * 0.3, when + 0.05);
+  ng.gain.setTargetAtTime(level * 0.1, when + 0.12, 0.12);
+  ng.gain.exponentialRampToValueAtTime(0.001, when + dur);
+  noise.connect(bp); bp.connect(ng); ng.connect(dest);
+  osc.start(when); osc.stop(when + dur + 0.05);
+  noise.start(when); noise.stop(when + dur + 0.05);
+}
+
+// Guitar: resonant-filtered noise burst (pick attack) + decaying sine (body).
+function guitarVoice(e, when, midi, dur, level, dest) {
+  const freq = mtof(midi);
+  const noise = e.ctx.createBufferSource(); noise.buffer = e.noiseBuf;
+  const f = e.ctx.createBiquadFilter(); f.type = "bandpass"; f.frequency.value = freq; f.Q.value = 30;
+  const ng = e.ctx.createGain();
+  ng.gain.setValueAtTime(level * 6, when); ng.gain.exponentialRampToValueAtTime(0.001, when + 0.04);
+  noise.connect(f); f.connect(ng); ng.connect(dest);
+  const osc = e.ctx.createOscillator(); osc.type = "sine"; osc.frequency.value = freq;
+  const g = e.ctx.createGain();
+  g.gain.setValueAtTime(0.0001, when);
+  g.gain.exponentialRampToValueAtTime(level * 0.5, when + 0.005);
+  g.gain.exponentialRampToValueAtTime(0.001, when + Math.min(dur * 0.75, 1.2));
+  osc.connect(g); g.connect(dest);
+  noise.start(when); noise.stop(when + 0.05);
+  osc.start(when); osc.stop(when + dur + 0.05);
 }
 
 // ============================================================================
@@ -369,6 +459,11 @@ function bassNote(e, when, midi, dur, level) {
 
 function pluck(e, when, midi, dur, level, type) {
   if (midi > 78) level *= 0.65;
+  const as = e.mode.arpSynth;
+  if (as === "fm-piano") return fmPianoVoice(e, when, midi, dur * 0.7, level, e.arpFilter, null);
+  if (as === "marimba")  return marimbaVoice(e, when, midi, dur, level, e.arpFilter);
+  if (as === "flute")    return fluteVoice(e, when, midi, dur * 0.8, level * 0.65, e.arpFilter, null);
+  if (as === "guitar")   return guitarVoice(e, when, midi, dur, level, e.arpFilter);
   const o = e.ctx.createOscillator(); o.type = type; o.frequency.value = mtof(midi);
   const g = e.ctx.createGain();
   g.gain.setValueAtTime(0.0001, when);
@@ -380,7 +475,13 @@ function pluck(e, when, midi, dur, level, type) {
 
 function leadNote(e, when, midi, dur, level, type) {
   midi = Math.min(midi, 84);
-  if (midi > 76) { level *= 0.7; if (type === "square") type = "triangle"; }
+  if (midi > 76) level *= 0.7;
+  const ls = e.mode.leadSynth;
+  if (ls === "fm-piano") return fmPianoVoice(e, when, midi, dur, level, e.leadFilter, e.vibGain);
+  if (ls === "marimba")  return marimbaVoice(e, when, midi, dur, level, e.leadFilter);
+  if (ls === "flute")    return fluteVoice(e, when, midi, dur, level, e.leadFilter, e.vibGain);
+  if (ls === "guitar")   return guitarVoice(e, when, midi, dur, level, e.leadFilter);
+  if (type === "square" && midi > 76) type = "triangle";
   const o = e.ctx.createOscillator(); o.type = type; o.frequency.value = mtof(midi);
   e.vibGain.connect(o.detune);
   const g = e.ctx.createGain();
@@ -393,9 +494,15 @@ function leadNote(e, when, midi, dur, level, type) {
   o.start(when); o.stop(when + dur + 0.05);
 }
 
-// Counterpoint voice: triangle wave, lower register, softer attack.
+// Counterpoint voice: lower register, mode-specific synthesis.
 function cpNote(e, when, midi, dur, level) {
   midi = Math.min(Math.max(midi, 45), 72);
+  const cs = e.mode.cpSynth;
+  const lv = level * 0.75;
+  if (cs === "fm-piano") return fmPianoVoice(e, when, midi, dur, lv, e.cpFilter, e.vibGainCp);
+  if (cs === "marimba")  return marimbaVoice(e, when, midi, dur, lv, e.cpFilter);
+  if (cs === "flute")    return fluteVoice(e, when, midi, dur, lv, e.cpFilter, e.vibGainCp);
+  if (cs === "guitar")   return guitarVoice(e, when, midi, dur, lv, e.cpFilter);
   const o = e.ctx.createOscillator(); o.type = e.mode.cpType; o.frequency.value = mtof(midi);
   e.vibGainCp.connect(o.detune);
   const g = e.ctx.createGain();
@@ -416,9 +523,10 @@ function padChord(e, when, chord, barDur, high) {
       o.detune.value = cents;
       const g = e.ctx.createGain();
       const lvl = (e.cur.pad * 0.08) / Math.sqrt(notes.length) * (high ? 0.7 : 1);
+      const pAtk = e.mode.padAtk;
       g.gain.setValueAtTime(0.0001, when);
-      g.gain.linearRampToValueAtTime(lvl, when + 0.7);
-      g.gain.setValueAtTime(lvl, when + barDur - 0.3);
+      g.gain.linearRampToValueAtTime(lvl, when + pAtk);
+      g.gain.setValueAtTime(lvl, when + barDur - Math.min(pAtk * 0.4, 0.8));
       g.gain.linearRampToValueAtTime(0.0001, when + barDur + 0.9);
       o.connect(g); g.connect(e.padFilter);
       o.start(when); o.stop(when + barDur + 1.0);
