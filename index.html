@@ -251,7 +251,8 @@ function fluteVoice(e, when, midi, dur, level, dest, vibNode) {
 
 // Pipe organ: additive sine synthesis (Principal chorus drawbars).
 // Box envelope with 8ms ramp to prevent clicks. No vibrato.
-function organVoice(e, when, midi, dur, level, dest) {
+// numP controls how many drawbar partials are created (fewer = lighter CPU).
+function organVoice(e, when, midi, dur, level, dest, numP = 6) {
   const freq = mtof(midi);
   // 8' 4' 2⅔' 2' 1⅗' 1' (Principal + Nazard + Tierce)
   const drawbars = [[1,0.70],[2,0.50],[3,0.22],[4,0.28],[5,0.10],[8,0.04]];
@@ -261,7 +262,7 @@ function organVoice(e, when, midi, dur, level, dest) {
   g.gain.setValueAtTime(level, when + Math.max(dur - 0.008, 0.008));
   g.gain.linearRampToValueAtTime(0, when + dur);
   g.connect(dest);
-  drawbars.forEach(([ratio, amp]) => {
+  drawbars.slice(0, numP).forEach(([ratio, amp]) => {
     const osc = e.ctx.createOscillator(); osc.type = "sine";
     osc.frequency.value = freq * ratio;
     const pg = e.ctx.createGain(); pg.gain.value = amp;
@@ -504,7 +505,7 @@ function pluck(e, when, midi, dur, level, type) {
   if (as === "marimba")      return marimbaVoice(e, when, midi, dur, level, e.arpFilter);
   if (as === "flute")        return fluteVoice(e, when, midi, dur * 0.8, level * 0.65, e.arpFilter, null);
   if (as === "guitar")       return guitarVoice(e, when, midi, dur, level, e.arpFilter);
-  if (as === "harpsichord")  return organVoice(e, when, midi, Math.min(dur, 0.14), level, e.arpFilter);
+  if (as === "harpsichord")  return organVoice(e, when, midi, Math.min(dur, 0.14), level, e.arpFilter, 3);
   const o = e.ctx.createOscillator(); o.type = type; o.frequency.value = mtof(midi);
   const g = e.ctx.createGain();
   g.gain.setValueAtTime(0.0001, when);
@@ -522,7 +523,7 @@ function leadNote(e, when, midi, dur, level, type) {
   if (ls === "marimba")  return marimbaVoice(e, when, midi, dur, level, e.leadFilter);
   if (ls === "flute")    return fluteVoice(e, when, midi, dur, level, e.leadFilter, e.vibGain);
   if (ls === "guitar")   return guitarVoice(e, when, midi, dur, level, e.leadFilter);
-  if (ls === "organ")    return organVoice(e, when, midi, dur, level, e.leadFilter);
+  if (ls === "organ")    return organVoice(e, when, midi, dur, level, e.leadFilter, 4);
   if (type === "square" && midi > 76) type = "triangle";
   const o = e.ctx.createOscillator(); o.type = type; o.frequency.value = mtof(midi);
   e.vibGain.connect(o.detune);
@@ -545,7 +546,7 @@ function cpNote(e, when, midi, dur, level) {
   if (cs === "marimba")  return marimbaVoice(e, when, midi, dur, lv, e.cpFilter);
   if (cs === "flute")    return fluteVoice(e, when, midi, dur, lv, e.cpFilter, e.vibGainCp);
   if (cs === "guitar")   return guitarVoice(e, when, midi, dur, lv, e.cpFilter);
-  if (cs === "organ")    return organVoice(e, when, midi, dur, lv, e.cpFilter);
+  if (cs === "organ")    return organVoice(e, when, midi, dur, lv, e.cpFilter, 4);
   const o = e.ctx.createOscillator(); o.type = e.mode.cpType; o.frequency.value = mtof(midi);
   e.vibGainCp.connect(o.detune);
   const g = e.ctx.createGain();
@@ -562,9 +563,11 @@ function padChord(e, when, chord, barDur, high) {
   const pAtk = e.mode.padAtk;
 
   if (e.mode.leadSynth === "organ") {
-    // Organ pad: additive chorus (8'+4'+2⅔') per chord note, no detuning
-    const lvl = (e.cur.pad * 0.055) / Math.sqrt(notes.length) * (high ? 0.7 : 1);
-    notes.forEach((iv) => {
+    // Organ pad: additive chorus (8'+4'+2⅔') per chord note, no detuning.
+    // Cap at 3 notes so dom7 chords don't spawn extra oscillators.
+    const padNotes = notes.slice(0, 3);
+    const lvl = (e.cur.pad * 0.055) / Math.sqrt(padNotes.length) * (high ? 0.7 : 1);
+    padNotes.forEach((iv) => {
       const freq = mtof(chord.r + 12 + iv);
       const g = e.ctx.createGain();
       g.gain.setValueAtTime(0, when);
@@ -659,7 +662,10 @@ function scheduleStep(e) {
   const arpGate =
     d < 0.25 ? s % 8 === 0 :
     d < 0.45 ? s % 4 === 0 :
-    d < 0.65 ? s % 2 === 0 : true;
+    // Organ: cap at 8th notes; drop arp entirely at high density (contrapuntal texture)
+    (e.mode.leadSynth === "organ")
+      ? (d < 1.0 ? s % 2 === 0 : false)
+      : (d < 0.65 ? s % 2 === 0 : true);
   if (e.section.arpOn && arpGate) {
     const tones = d > 1.05
       ? chord.iv.map((x) => x - 12).concat(chord.iv, chord.iv.map((x) => x + 12))
