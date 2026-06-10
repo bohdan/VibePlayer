@@ -40,6 +40,8 @@
     box-shadow: 0 0 calc(var(--glow) * 60px) hsla(var(--hue), 90%, 60%, 0.45);
     display: flex; align-items: center; justify-content: center; }
   .row { display: flex; align-items: center; gap: 18px; }
+  /* balance the label so the control itself sits dead-centre in the panel */
+  .row::after { content: ""; width: 72px; }
   .label { font-size: 10px; letter-spacing: 0.3em; text-transform: uppercase; color: #6d6a80;
     width: 72px; text-align: right; }
   .stepper { display: flex; align-items: center; gap: 14px; }
