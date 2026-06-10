@@ -51,9 +51,13 @@ class PlaybackService : Service() {
             startForeground(NOTIF_ID, notification)
         }
 
-        wakeLock = (getSystemService(POWER_SERVICE) as PowerManager)
-            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "VibePlayer:playback")
-            .apply { acquire() }
+        // onStartCommand can run more than once per service lifetime; creating a
+        // fresh lock each time would orphan the previous one while it's still held.
+        if (wakeLock?.isHeld != true) {
+            wakeLock = (getSystemService(POWER_SERVICE) as PowerManager)
+                .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "VibePlayer:playback")
+                .apply { acquire() }
+        }
 
         return START_STICKY
     }

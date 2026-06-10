@@ -172,9 +172,17 @@ function createEngine(ctx, tierIdx, volume) {
   const data = noiseBuf.getChannelData(0);
   for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
 
+  // Scheduler pump driven by audio callbacks. Unlike setInterval — which the
+  // WebView throttles to 1Hz or less once the app is backgrounded — these
+  // keep firing for as long as the context is running.
+  const pump = ctx.createScriptProcessor(16384, 1, 1);
+  pump.onaudioprocess = () => pumpScheduler();
+  const pumpMute = ctx.createGain(); pumpMute.gain.value = 0;
+  pump.connect(pumpMute); pumpMute.connect(ctx.destination);
+
   const t = STATES[tierIdx];
   const e = {
-    ctx, master, padBus, bassBus, arpBus, leadBus, drumBus, delay, noiseBuf,
+    ctx, master, padBus, bassBus, arpBus, leadBus, drumBus, delay, noiseBuf, pump,
     padFilter, bassFilter, arpFilter, leadFilter, vibGain,
     cur: Object.assign({}, t), target: Object.assign({}, t),
     tierIdx, step: 0, nextTime: ctx.currentTime + 0.1,
@@ -465,6 +473,27 @@ for (let n = 1; n <= 5; n++) {
   dotsBox.appendChild(b);
 }
 
+function pumpScheduler() {
+  if (!engine || !playing) return;
+  const ctx = engine.ctx;
+  // If we stalled long enough for the schedule to fall behind (timer
+  // throttling, GC pause), skip the missed steps. Scheduling them at past
+  // timestamps would fire them all simultaneously as a burst of noise.
+  if (engine.nextTime < ctx.currentTime) {
+    const stepDur = 60 / engine.cur.bpm / 4;
+    const missed = Math.ceil((ctx.currentTime - engine.nextTime) / stepDur);
+    engine.step += missed;
+    engine.nextTime += missed * stepDur;
+  }
+  // Deeper lookahead while hidden: wakeups are sparse and jittery there.
+  const ahead = document.hidden ? 4 : 1.5;
+  while (engine.nextTime < ctx.currentTime + ahead) scheduleStep(engine);
+}
+
+// Top up the schedule the moment we go to the background, before throttling
+// kicks in, so the deeper hidden lookahead is already in place.
+document.addEventListener("visibilitychange", pumpScheduler);
+
 function notifyNative(isPlaying) {
   if (window.AndroidBridge && window.AndroidBridge.setPlaying) {
     window.AndroidBridge.setPlaying(isPlaying);
@@ -500,11 +529,10 @@ playBtn.addEventListener("click", () => {
   if (!playing) {
     engine.ctx.resume();
     engine.nextTime = Math.max(engine.nextTime, engine.ctx.currentTime + 0.08);
-    // Deep lookahead: survives timer throttling when screen is off / app backgrounded
-    timer = setInterval(() => {
-      while (engine.nextTime < engine.ctx.currentTime + 1.5) scheduleStep(engine);
-    }, 100);
     playing = true;
+    pumpScheduler();
+    // Foreground tick; in the background the ScriptProcessor pump takes over.
+    timer = setInterval(pumpScheduler, 100);
     playBtn.innerHTML = "&#10074;&#10074;";
     playBtn.setAttribute("aria-label", "Pause");
     notifyNative(true);
