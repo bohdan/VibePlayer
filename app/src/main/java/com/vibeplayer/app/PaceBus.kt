@@ -9,14 +9,13 @@ package com.vibeplayer.app
  *                           can forward the tier into the WebView.
  */
 object PaceBus {
-    @Volatile var goMode: Boolean = false
+    // Custom setter fires goModeChanged automatically; avoids a JVM signature
+    // clash that would arise from having both this property and a fun setGoMode().
+    var goMode: Boolean = false
+        set(value) { field = value; goModeChanged?.invoke(value) }
+
     @Volatile var goModeChanged: ((Boolean) -> Unit)? = null
     @Volatile var paceTierChanged: ((Int) -> Unit)? = null
-
-    fun setGoMode(active: Boolean) {
-        goMode = active
-        goModeChanged?.invoke(active)
-    }
 
     fun sendTier(tier: Int) {
         paceTierChanged?.invoke(tier)
