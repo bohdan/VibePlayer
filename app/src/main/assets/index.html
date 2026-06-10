@@ -60,6 +60,7 @@
     width: 150px; height: 2px; background: #2c2a3a; border-radius: 2px; }
   input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none;
     width: 18px; height: 18px; border-radius: 50%; background: var(--accent); }
+  .mode-name { font-size: 13px; min-width: 7ch; text-align: center; color: #e8e6f0; }
 </style>
 </head>
 <body>
@@ -84,6 +85,14 @@
         <button class="go-btn" id="goBtn" aria-label="Toggle on the go mode">go</button>
       </div>
       <span class="pace-hint" id="paceHint"></span>
+    </div>
+    <div class="row">
+      <span class="label">mode</span>
+      <div class="stepper">
+        <button id="modePrev" aria-label="Previous mode">&#8249;</button>
+        <span class="mode-name" id="modeName">synth</span>
+        <button id="modeNext" aria-label="Next mode">&#8250;</button>
+      </div>
     </div>
     <div class="row">
       <span class="label">volume</span>
@@ -116,17 +125,44 @@ const PROG_BANDS = [
   [ [ch(45,m),ch(43,M),ch(41,M),ch(40,M)],    [ch(45,m),ch(48,M),ch(43,M),ch(40,M)] ],
 ];
 
-const SCALE = [0,2,3,5,7,8,10];
+const LYDIAN_PROGS = [
+  [ [ch(60,M),ch(67,M),ch(69,m),ch(67,M)], [ch(60,M),ch(67,M),ch(60,M),ch(62,M)] ],
+  [ [ch(60,M),ch(62,M),ch(69,m),ch(67,M)], [ch(60,M),ch(67,M),ch(62,M),ch(69,m)] ],
+  [ [ch(60,M),ch(62,M),ch(64,m),ch(67,M)], [ch(60,M),ch(64,m),ch(62,M),ch(67,M)] ],
+  [ [ch(60,M),ch(62,M),ch(67,M),ch(64,m)], [ch(60,M),ch(67,M),ch(64,m),ch(62,M)] ],
+];
+
+const MODES = [
+  { key:"synth",   scale:[0,2,3,5,7,8,10], root:57, progBands:PROG_BANDS,
+    leadTypes:["sawtooth","triangle","square"], cpType:"triangle", padType:"sawtooth",
+    arpTypes:["square","sawtooth","triangle"], vibDepth:6, atk:0.015, dec:0.08 },
+  { key:"orbital", scale:[0,2,3,5,7,9,10], root:57, progBands:PROG_BANDS,
+    leadTypes:["triangle","triangle","sine"], cpType:"sine", padType:"sawtooth",
+    arpTypes:["triangle","sine"], vibDepth:3, atk:0.04, dec:0.14 },
+  { key:"dark",    scale:[0,1,3,5,7,8,10], root:57, progBands:PROG_BANDS,
+    leadTypes:["square","square","sawtooth"], cpType:"square", padType:"sawtooth",
+    arpTypes:["square","sawtooth"], vibDepth:9, atk:0.006, dec:0.05 },
+  { key:"dream",   scale:[0,2,4,6,7,9,11], root:60, progBands:LYDIAN_PROGS,
+    leadTypes:["sine","triangle","triangle"], cpType:"sine", padType:"sine",
+    arpTypes:["triangle","sine"], vibDepth:2, atk:0.06, dec:0.18 },
+  { key:"tension", scale:[0,2,3,5,7,8,11], root:57, progBands:PROG_BANDS,
+    leadTypes:["square","sawtooth","triangle"], cpType:"triangle", padType:"sawtooth",
+    arpTypes:["square","sawtooth"], vibDepth:7, atk:0.009, dec:0.06 },
+];
+
 const mtof = (mid) => 440 * Math.pow(2, (mid - 69) / 12);
 const lerp = (a, b, t) => a + (b - a) * t;
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
-const degToMidi = (deg) => 57 + 12 * Math.floor(deg / 7) + SCALE[((deg % 7) + 7) % 7];
+function degToMidi(deg, scale, root) {
+  const n = scale.length;
+  return root + 12 * Math.floor(deg / n) + scale[((deg % n) + n) % n];
+}
 
 // ============================================================================
 // Procedural synthwave engine (Web Audio) — same engine as the web version:
 // shared per-bus filters, generative 4-bar sections, deep scheduling lookahead.
 // ============================================================================
-function createEngine(ctx, tierIdx, volume) {
+function createEngine(ctx, tierIdx, modeIdx, volume) {
   const master = ctx.createGain();
   master.gain.value = volume * 0.8;
   const comp = ctx.createDynamicsCompressor();
@@ -164,9 +200,10 @@ function createEngine(ctx, tierIdx, volume) {
   const cpSend = bus(0.1, delayIn); cpBus.connect(cpSend);
   const cpFilter = mkFilter(1100, 1.2, cpBus);
 
+  const mode = MODES[modeIdx];
   const vib = ctx.createOscillator(); vib.frequency.value = 5.5;
-  const vibGain = ctx.createGain(); vibGain.gain.value = 6;
-  const vibGainCp = ctx.createGain(); vibGainCp.gain.value = 3;
+  const vibGain = ctx.createGain(); vibGain.gain.value = mode.vibDepth;
+  const vibGainCp = ctx.createGain(); vibGainCp.gain.value = mode.vibDepth * 0.5;
   vib.connect(vibGain); vib.connect(vibGainCp); vib.start();
 
   const noiseBuf = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
@@ -186,7 +223,8 @@ function createEngine(ctx, tierIdx, volume) {
     ctx, master, padBus, bassBus, arpBus, leadBus, cpBus, drumBus, delay, noiseBuf, pump,
     padFilter, bassFilter, arpFilter, leadFilter, cpFilter, vibGain, vibGainCp,
     cur: Object.assign({}, t), target: Object.assign({}, t),
-    tierIdx, step: 0, nextTime: ctx.currentTime + 0.1,
+    tierIdx, modeIdx, mode,
+    step: 0, nextTime: ctx.currentTime + 0.1,
     arpIdx: 0, leadDeg: 7, cpDeg: 3, prevLeadDir: 0,
     lastBeatTime: 0, beatDur: 60 / t.bpm, section: null,
     theme: Array(16).fill(null), recording: Array(16).fill(null),
@@ -244,13 +282,13 @@ function rollSection(e, bar) {
 
   e.section = {
     startBar: bar,
-    prog: pick(PROG_BANDS[band]),
+    prog: pick(e.mode.progBands[band]),
     leadOn: Math.random() < 0.3 + d * 0.55,
-    leadType: pick(["sawtooth", "triangle", "square"]),
+    leadType: pick(e.mode.leadTypes),
     leadOctave: d > 1.05 ? 0 : Math.random() < 0.25 ? 12 : 0,
     motif: makeMotif(d),
     arpOn: Math.random() < (d < 0.3 ? 0.55 : 0.9),
-    arpType: pick(["square", "sawtooth", "triangle"]),
+    arpType: pick(e.mode.arpTypes),
     arpMode: pick(["up", "down", "updown", "random"]),
     bassMode:
       d < 0.4 ? pick(["hold", "quarters"]) :
@@ -346,9 +384,10 @@ function leadNote(e, when, midi, dur, level, type) {
   const o = e.ctx.createOscillator(); o.type = type; o.frequency.value = mtof(midi);
   e.vibGain.connect(o.detune);
   const g = e.ctx.createGain();
+  const atk = e.mode.atk;
   g.gain.setValueAtTime(0.0001, when);
-  g.gain.exponentialRampToValueAtTime(level, when + 0.015);
-  g.gain.setTargetAtTime(level * 0.6, when + 0.05, 0.08);
+  g.gain.exponentialRampToValueAtTime(level, when + atk);
+  g.gain.setTargetAtTime(level * 0.6, when + atk * 3, e.mode.dec);
   g.gain.exponentialRampToValueAtTime(0.001, when + dur);
   o.connect(g); g.connect(e.leadFilter);
   o.start(when); o.stop(when + dur + 0.05);
@@ -357,7 +396,7 @@ function leadNote(e, when, midi, dur, level, type) {
 // Counterpoint voice: triangle wave, lower register, softer attack.
 function cpNote(e, when, midi, dur, level) {
   midi = Math.min(Math.max(midi, 45), 72);
-  const o = e.ctx.createOscillator(); o.type = "triangle"; o.frequency.value = mtof(midi);
+  const o = e.ctx.createOscillator(); o.type = e.mode.cpType; o.frequency.value = mtof(midi);
   e.vibGainCp.connect(o.detune);
   const g = e.ctx.createGain();
   g.gain.setValueAtTime(0.0001, when);
@@ -372,7 +411,7 @@ function padChord(e, when, chord, barDur, high) {
   const notes = high ? chord.iv.map((iv) => iv + 12) : chord.iv;
   notes.forEach((iv) => {
     [-6, 6].forEach((cents) => {
-      const o = e.ctx.createOscillator(); o.type = "sawtooth";
+      const o = e.ctx.createOscillator(); o.type = e.mode.padType;
       o.frequency.value = mtof(chord.r + 12 + iv);
       o.detune.value = cents;
       const g = e.ctx.createGain();
@@ -392,7 +431,7 @@ function nextLeadDegree(e, chord, s) {
     const targetMidi = chord.r + 24 + pick(chord.iv);
     let best = e.leadDeg, bestDist = 99;
     for (let deg = 0; deg <= 14; deg++) {
-      const dist = Math.abs(degToMidi(deg) - targetMidi);
+      const dist = Math.abs(degToMidi(deg, e.mode.scale, e.mode.root) - targetMidi);
       if (dist < bestDist) { bestDist = dist; best = deg; }
     }
     return best;
@@ -428,7 +467,7 @@ function scheduleStep(e) {
     if (!e.section.padOff) padChord(e, when, e.chord, stepDur * 16, e.section.padHigh);
     e.delay.delayTime.setTargetAtTime((60 / e.cur.bpm) * 0.75, when, 0.5);
   }
-  const chord = e.chord || PROG_BANDS[0][0][0];
+  const chord = e.chord || e.mode.progBands[0][0][0];
   const lastBarOfSection = bar % 8 === 7;
 
   let bassOn = false, bassMidi = chord.r - 12, bassDur = stepDur * 1.8;
@@ -482,7 +521,7 @@ function scheduleStep(e) {
         e.recording[s] = e.leadDeg; // record for next section's theme
       }
       e.prevLeadDir = Math.sign(e.leadDeg - prevDeg);
-      const midi = degToMidi(e.leadDeg) + e.section.leadOctave;
+      const midi = degToMidi(e.leadDeg, e.mode.scale, e.mode.root) + e.section.leadOctave;
       const len = Math.random() < 0.2 ? stepDur * 14
                 : Math.random() < 0.5 ? stepDur * 8
                 : stepDur * 5;
@@ -501,13 +540,13 @@ function scheduleStep(e) {
         const target = (chord.r + pick(chord.iv)) % 12;
         let best = e.cpDeg, bestDist = 99;
         for (let deg = 0; deg <= 6; deg++) {
-          const dist = Math.abs(degToMidi(deg) % 12 - target);
+          const dist = Math.abs(degToMidi(deg, e.mode.scale, e.mode.root) % 12 - target);
           if (dist < bestDist) { bestDist = dist; best = deg; }
         }
         e.cpDeg = best;
       }
       const cpLen = d < 0.5 ? stepDur * cpRate * 1.6 : stepDur * 6;
-      cpNote(e, when + jit(), degToMidi(e.cpDeg), cpLen, (0.065 + d * 0.025) * vel());
+      cpNote(e, when + jit(), degToMidi(e.cpDeg, e.mode.scale, e.mode.root), cpLen, (0.065 + d * 0.025) * vel());
     }
   }
 
@@ -548,7 +587,7 @@ function scheduleStep(e) {
 // ============================================================================
 let engine = null, timer = null, playing = false;
 let urgency = 0, volume = 0.7; // urgency maps directly onto STATES tiers
-let goMode = false;
+let goMode = false, modeIdx = 0;
 let hue = STATES[0].hue;
 
 const $ = (id) => document.getElementById(id);
@@ -616,6 +655,19 @@ function update() {
 $("urgMinus").addEventListener("click", () => { urgency = Math.max(0, urgency - 1); update(); });
 $("urgPlus").addEventListener("click", () => { urgency = Math.min(STATES.length - 1, urgency + 1); update(); });
 
+function setMode(idx) {
+  modeIdx = Math.max(0, Math.min(MODES.length - 1, idx));
+  $("modeName").textContent = MODES[modeIdx].key;
+  if (engine) {
+    engine.modeIdx = modeIdx;
+    engine.mode = MODES[modeIdx];
+    engine.vibGain.gain.setTargetAtTime(engine.mode.vibDepth, engine.ctx.currentTime, 0.5);
+    engine.vibGainCp.gain.setTargetAtTime(engine.mode.vibDepth * 0.5, engine.ctx.currentTime, 0.5);
+  }
+}
+$("modePrev").addEventListener("click", () => setMode(modeIdx - 1));
+$("modeNext").addEventListener("click", () => setMode(modeIdx + 1));
+
 $("goBtn").addEventListener("click", () => {
   goMode = !goMode;
   $("goBtn").classList.toggle("active", goMode);
@@ -632,7 +684,7 @@ $("volume").addEventListener("input", (ev) => {
 playBtn.addEventListener("click", () => {
   if (!engine) {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    engine = createEngine(ctx, urgency, volume);
+    engine = createEngine(ctx, urgency, modeIdx, volume);
   }
   if (!playing) {
     engine.ctx.resume();
