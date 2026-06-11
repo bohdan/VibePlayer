@@ -26,11 +26,16 @@
     color: var(--accent); text-shadow: 0 0 18px hsla(var(--hue), 90%, 60%, 0.6); margin-left: 0.55em; }
   .track { font-size: 15px; color: #b9b6c9; min-height: 2.6em; transition: opacity 0.6s; }
   .track small { display: block; font-size: 10.5px; color: #6d6a80; margin-top: 5px; letter-spacing: 0.12em; }
-  .play { width: 84px; height: 84px; border-radius: 50%;
-    border: 1px solid var(--accent); background: hsla(var(--hue), 90%, 60%, 0.08);
-    color: var(--accent); font-size: 26px; cursor: pointer;
-    box-shadow: 0 0 calc(var(--glow) * 60px) hsla(var(--hue), 90%, 60%, 0.45);
-    display: flex; align-items: center; justify-content: center; }
+  .play { width: 84px; height: 84px; border: none; background: transparent;
+    color: var(--accent); cursor: pointer;
+    display: flex; align-items: center; justify-content: center; position: relative;
+    filter: drop-shadow(0 0 calc(var(--glow) * 20px) hsla(var(--hue), 90%, 60%, 0.75)); }
+  .oct-svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+  .oct-svg * { fill: none; stroke: currentColor; }
+  .oct-outer { stroke-width: 1.8; }
+  .oct-inner { stroke-width: 1.1; opacity: 0.50; }
+  .oct-conn  { stroke-width: 0.85; opacity: 0.35; }
+  #playIcon  { position: relative; z-index: 1; font-size: 20px; pointer-events: none; }
   .row { display: flex; flex-direction: column; align-items: center; gap: 12px; }
   .label { font-size: 10px; letter-spacing: 0.3em; text-transform: uppercase; color: #6d6a80;
     margin-left: 0.3em; /* offset trailing letter-spacing so text is optically centred */ }
@@ -54,28 +59,33 @@
     width: 18px; height: 18px; border-radius: 50%; background: var(--accent); }
   .mode-name { font-size: 13px; min-width: 7ch; text-align: center; color: #e8e6f0; }
   #bg3d { position: absolute; inset: 0; pointer-events: none; }
-  .grid { position: absolute; left: -40%; right: -40%; bottom: -10%; height: 52%;
-    background:
-      repeating-linear-gradient(to top,  hsla(var(--hue), 90%, 60%, 0.26) 0 1px, transparent 1px 42px),
-      repeating-linear-gradient(to right, hsla(var(--hue), 90%, 60%, 0.20) 0 1px, transparent 1px 64px);
-    transform: perspective(420px) rotateX(64deg); transform-origin: bottom;
-    -webkit-mask-image: linear-gradient(to top, black 30%, transparent 95%);
-    mask-image: linear-gradient(to top, black 30%, transparent 95%);
-    pointer-events: none; }
 </style>
 </head>
 <body>
 <div class="scene" id="scene">
   <canvas id="bg3d"></canvas>
   <div class="horizon"></div>
-  <div class="grid"></div>
   <div class="panel">
     <div class="vibe-name" id="vibeName">zen</div>
     <div class="track" id="trackBox">
       <span id="trackName">Midnight Drift</span>
       <small id="trackSub">procedural synthwave &middot; 72 bpm</small>
     </div>
-    <button class="play" id="playBtn" aria-label="Play">&#9654;</button>
+    <button class="play" id="playBtn" aria-label="Play">
+      <svg class="oct-svg" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+        <polygon class="oct-outer" points="29,3 71,3 97,29 97,71 71,97 29,97 3,71 3,29"/>
+        <polygon class="oct-inner" points="36,12 64,12 88,36 88,64 64,88 36,88 12,64 12,36"/>
+        <line class="oct-conn" x1="29" y1="3"  x2="36" y2="12"/>
+        <line class="oct-conn" x1="71" y1="3"  x2="64" y2="12"/>
+        <line class="oct-conn" x1="97" y1="29" x2="88" y2="36"/>
+        <line class="oct-conn" x1="97" y1="71" x2="88" y2="64"/>
+        <line class="oct-conn" x1="71" y1="97" x2="64" y2="88"/>
+        <line class="oct-conn" x1="29" y1="97" x2="36" y2="88"/>
+        <line class="oct-conn" x1="3"  y1="71" x2="12" y2="64"/>
+        <line class="oct-conn" x1="3"  y1="29" x2="12" y2="36"/>
+      </svg>
+      <span id="playIcon">&#9654;</span>
+    </button>
     <div class="row">
       <span class="label">urgency</span>
       <div class="stepper-wrap">
@@ -875,14 +885,14 @@ playBtn.addEventListener("click", () => {
     pumpScheduler();
     // Foreground tick; in the background the ScriptProcessor pump takes over.
     timer = setInterval(pumpScheduler, 100);
-    playBtn.innerHTML = "&#10074;&#10074;";
+    $("playIcon").innerHTML = "&#10074;&#10074;";
     playBtn.setAttribute("aria-label", "Pause");
     notifyNative(true);
   } else {
     clearInterval(timer);
     engine.ctx.suspend();
     playing = false;
-    playBtn.innerHTML = "&#9654;";
+    $("playIcon").innerHTML = "&#9654;";
     playBtn.setAttribute("aria-label", "Play");
     notifyNative(false);
   }
@@ -904,24 +914,24 @@ playBtn.addEventListener("click", () => {
 })();
 
 // ============================================================================
-// Retro 80s 3D wireframe background
+// Retro road perspective background
 // ============================================================================
 (function() {
   const cv = document.getElementById('bg3d');
   const cx2 = cv.getContext('2d');
   let W, H, VCX, VCY, FOV;
+  const Z_NEAR = 55, Z_FAR = 2200, ROAD_W = 220, ROAD_Y = 280;
 
   function resize() {
     W = cv.width  = window.innerWidth;
     H = cv.height = window.innerHeight;
-    VCX = W * 0.5; VCY = H * 0.44; FOV = Math.min(W, H) * 0.88;
+    VCX = W * 0.5; VCY = H * 0.50; FOV = Math.min(W, H) * 0.88;
   }
   window.addEventListener('resize', resize); resize();
 
   // --- Geometry -------------------------------------------------
   const phi = (1 + Math.sqrt(5)) / 2;
   const nrm = v => { const l = Math.hypot(...v); return v.map(n => n / l); };
-
   const ICOSA = {
     v: [[-1,phi,0],[1,phi,0],[-1,-phi,0],[1,-phi,0],[0,-1,phi],[0,1,phi],
         [0,-1,-phi],[0,1,-phi],[phi,0,-1],[phi,0,1],[-phi,0,-1],[-phi,0,1]].map(nrm),
@@ -951,29 +961,31 @@ playBtn.addEventListener("click", () => {
   const SHAPES = [ICOSA, CUBE, TORUS, ICOSA, OCTA, CUBE];
 
   // --- Rotation & projection ------------------------------------
-  const rotX = ([x,y,z],a) => { const c=Math.cos(a),s=Math.sin(a); return [x,       y*c-z*s, y*s+z*c]; };
-  const rotY = ([x,y,z],a) => { const c=Math.cos(a),s=Math.sin(a); return [x*c+z*s, y,       -x*s+z*c]; };
+  const rotX = ([x,y,z],a) => { const c=Math.cos(a),s=Math.sin(a); return [x, y*c-z*s, y*s+z*c]; };
+  const rotY = ([x,y,z],a) => { const c=Math.cos(a),s=Math.sin(a); return [x*c+z*s, y, -x*s+z*c]; };
   const rotZ = ([x,y,z],a) => { const c=Math.cos(a),s=Math.sin(a); return [x*c-y*s, x*s+y*c, z]; };
   const proj3 = (px,py,pz) => { const s=FOV/(FOV+pz); return [VCX+px*s, VCY+py*s, s]; };
 
   // --- Scene objects & stars ------------------------------------
   function spawnObj(i, z) {
+    const sz = 44 + Math.random() * 56;
     return {
       sh:  SHAPES[i % SHAPES.length],
-      x:   (Math.random()-0.5)*700,
-      y:   (Math.random()-0.5)*260,
+      x:   (Math.random()-0.5) * ROAD_W * 0.9,
       z:   z,
       ax:  Math.random()*6.28, ay: Math.random()*6.28, az: Math.random()*6.28,
       dax: (Math.random()-0.5)*0.018,
       day: (Math.random()-0.5)*0.024,
       daz: (Math.random()-0.5)*0.013,
-      sz:  52 + Math.random()*72,
+      sz:  sz,
       spd: 1.5 + Math.random()*1.8,
     };
   }
-  const objs  = Array.from({length:6}, (_,i) => spawnObj(i, 300 + i*320));
-  const stars = Array.from({length:130}, () => ({
-    x: (Math.random()-0.5)*1200, y: (Math.random()-0.5)*800, z: Math.random()*1600+100
+  const objs  = Array.from({length:6}, (_,i) => spawnObj(i, 200 + i*240));
+  const stars = Array.from({length:100}, () => ({
+    x: (Math.random()-0.5)*1400,
+    y: -(55 + Math.random()*280),
+    z: Math.random()*1600+100
   }));
 
   // --- Per-frame draw (called from main RAF loop) ---------------
@@ -982,46 +994,113 @@ playBtn.addEventListener("click", () => {
     cx2.clearRect(0, 0, W, H);
     const spd = 1 + (urg||0) * 0.18;
 
-    // Stars — converge toward vanishing point
+    // Stars — sky only (above horizon)
     stars.forEach(st => {
       st.z -= 2.2 * spd;
-      if (st.z < 5) { st.z=1600; st.x=(Math.random()-0.5)*1200; st.y=(Math.random()-0.5)*800; }
-      const [sx,sy,sc] = proj3(st.x, st.y, st.z);
-      const a = Math.min(sc*1.9, 0.82);
-      cx2.fillStyle = `hsla(${h},55%,92%,${a})`;
+      if (st.z < 5) { st.z=1600; st.x=(Math.random()-0.5)*1400; st.y=-(55+Math.random()*280); }
+      const [sx, sy, sc] = proj3(st.x, st.y, st.z);
+      if (sy > VCY + 4) return;
+      const a = Math.min(sc*1.9, 0.85);
+      cx2.fillStyle = `hsla(${h},55%,92%,${a.toFixed(2)})`;
       cx2.beginPath(); cx2.arc(sx, sy, Math.max(sc*3.2, 0.4), 0, 6.28); cx2.fill();
     });
 
-    // Horizon scan-line — thin pulsing neon stripe
+    // Road surface — trapezoid converging to vanishing point (VCX, VCY)
+    const sNear = FOV / (FOV + Z_NEAR);
+    const rxNL = VCX - ROAD_W * sNear, ryNL = VCY + ROAD_Y * sNear;
+    const rxNR = VCX + ROAD_W * sNear, ryNR = ryNL;
+    cx2.beginPath();
+    cx2.moveTo(rxNL, ryNL); cx2.lineTo(rxNR, ryNR);
+    cx2.lineTo(VCX + 1, VCY); cx2.lineTo(VCX - 1, VCY);
+    cx2.closePath();
+    cx2.fillStyle = '#08061a';
+    cx2.fill();
+
+    // Road cross-lines (log-spaced for even perspective feel)
+    const N = 18;
+    for (let i = 0; i <= N; i++) {
+      const t = i / N;
+      const z = Z_FAR * Math.pow(Z_NEAR / Z_FAR, t);
+      const sc = FOV / (FOV + z);
+      const xl = VCX - ROAD_W * sc, xr = VCX + ROAD_W * sc;
+      const yl = VCY + ROAD_Y * sc;
+      const fade = Math.pow(1 - t, 0.5);
+      cx2.strokeStyle = `hsla(${h},80%,60%,${(fade*0.28).toFixed(2)})`;
+      cx2.lineWidth = 0.4 + t * 1.2;
+      cx2.beginPath(); cx2.moveTo(xl, yl); cx2.lineTo(xr, yl); cx2.stroke();
+    }
+
+    // Road edge glow lines — from vanishing point to near corners
+    cx2.save();
+    cx2.shadowColor = `hsl(${h},100%,65%)`; cx2.shadowBlur = 8;
+    cx2.lineWidth = 1.5;
+    [[rxNL, ryNL], [rxNR, ryNR]].forEach(([ex, ey]) => {
+      const eg = cx2.createLinearGradient(VCX, VCY, ex, ey);
+      eg.addColorStop(0,   `hsla(${h},100%,70%,0.08)`);
+      eg.addColorStop(0.5, `hsla(${h},100%,70%,0.62)`);
+      eg.addColorStop(1,   `hsla(${h},100%,70%,0.35)`);
+      cx2.strokeStyle = eg;
+      cx2.beginPath(); cx2.moveTo(VCX, VCY); cx2.lineTo(ex, ey); cx2.stroke();
+    });
+    cx2.restore();
+
+    // Center lane dashes
+    for (let i = 0; i < 14; i++) {
+      const t1 =  i        / 14;
+      const t2 = (i + 0.45) / 14;
+      const z1 = Z_FAR * Math.pow(Z_NEAR / Z_FAR, t1);
+      const z2 = Z_FAR * Math.pow(Z_NEAR / Z_FAR, t2);
+      const y1 = VCY + ROAD_Y * FOV / (FOV + z1);
+      const y2 = VCY + ROAD_Y * FOV / (FOV + z2);
+      const fade = Math.pow(1 - t1, 0.4);
+      cx2.strokeStyle = `hsla(${h},80%,75%,${(fade*0.36).toFixed(2)})`;
+      cx2.lineWidth = 0.5 + (1 - t1) * 1.5;
+      cx2.beginPath(); cx2.moveTo(VCX, y1); cx2.lineTo(VCX, y2); cx2.stroke();
+    }
+
+    // Fog at horizon — covers road vanishing zone
+    const fogSpan = Math.max(12, (ryNL - VCY) * 0.20);
+    const fogGrad = cx2.createLinearGradient(0, VCY - 2, 0, VCY + fogSpan);
+    fogGrad.addColorStop(0,    `hsla(${h},40%,6%,0.92)`);
+    fogGrad.addColorStop(0.35, `hsla(${h},40%,6%,0.55)`);
+    fogGrad.addColorStop(1,    `hsla(${h},40%,6%,0)`);
+    cx2.fillStyle = fogGrad;
+    cx2.fillRect(0, VCY - 2, W, fogSpan + 2);
+
+    // Horizon scan-line
     const scanA = 0.13 + 0.07*Math.sin(Date.now()*0.0009);
-    const hg = cx2.createLinearGradient(0,0,W,0);
-    hg.addColorStop(0,    `hsla(${h},100%,70%,0)`);
-    hg.addColorStop(0.2,  `hsla(${h},100%,70%,${scanA})`);
-    hg.addColorStop(0.8,  `hsla(${h},100%,70%,${scanA})`);
-    hg.addColorStop(1,    `hsla(${h},100%,70%,0)`);
+    const hg = cx2.createLinearGradient(0, 0, W, 0);
+    hg.addColorStop(0,   `hsla(${h},100%,70%,0)`);
+    hg.addColorStop(0.2, `hsla(${h},100%,70%,${scanA})`);
+    hg.addColorStop(0.8, `hsla(${h},100%,70%,${scanA})`);
+    hg.addColorStop(1,   `hsla(${h},100%,70%,0)`);
     cx2.save();
     cx2.strokeStyle = hg; cx2.lineWidth = 1;
     cx2.shadowColor = `hsl(${h},100%,65%)`; cx2.shadowBlur = 9;
     cx2.beginPath(); cx2.moveTo(0, VCY); cx2.lineTo(W, VCY); cx2.stroke();
     cx2.restore();
 
-    // 3D wireframe objects
+    // Wireframe objects — ride on road surface
     objs.forEach((obj, oi) => {
-      obj.z  -= obj.spd * spd;
+      obj.z -= obj.spd * spd;
       obj.ax += obj.dax; obj.ay += obj.day; obj.az += obj.daz;
-      if (obj.z < -200) {
-        Object.assign(obj, spawnObj(oi, 1700 + Math.random()*400));
+      if (obj.z < Z_NEAR * 0.4) {
+        Object.assign(obj, spawnObj(oi, Z_FAR * 0.88 + Math.random()*280));
       }
       if (obj.z <= 1) return;
 
+      // Object center sits obj.sz * 1.2 above road surface (y = ROAD_Y)
+      const wy = ROAD_Y - obj.sz * 1.2;
       const pts = obj.sh.v.map(v => {
         let p = rotX(v, obj.ax); p = rotY(p, obj.ay); p = rotZ(p, obj.az);
-        return proj3(p[0]*obj.sz + obj.x, p[1]*obj.sz + obj.y, p[2]*obj.sz + obj.z);
+        return proj3(p[0]*obj.sz + obj.x, p[1]*obj.sz + wy, p[2]*obj.sz + obj.z);
       });
 
-      const near    = 1 - Math.min(obj.z / 900, 1);   // 0=far, 1=close
-      const alpha   = 0.10 + near * 0.75;
-      const bright  = 50  + near * 24;
+      const near    = Math.max(0, 1 - obj.z / Z_FAR);
+      const fogFade = Math.max(0, Math.min(1, (1400 - obj.z) / 800));
+      const alpha   = (0.12 + near * 0.76) * fogFade;
+      if (alpha < 0.03) return;
+      const bright  = 50 + near * 24;
       const glowAmt = near * 16;
       const lw      = 0.4 + near * 2.0;
 
