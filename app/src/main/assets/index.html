@@ -920,7 +920,9 @@ playBtn.addEventListener("click", () => {
   const cv = document.getElementById('bg3d');
   const cx2 = cv.getContext('2d');
   let W, H, VCX, VCY, FOV;
-  const Z_NEAR = 55, Z_FAR = 2200, ROAD_W = 220, ROAD_Y = 280;
+  const Z_NEAR = 55, Z_FAR = 2200, ROAD_W = 230, ROAD_Y = 470;
+  const LANES = [-0.66, -0.22, 0.22, 0.66];   // lane centers, fraction of ROAD_W
+  let roll = 0;                                // road scroll accumulator
 
   function resize() {
     W = cv.width  = window.innerWidth;
@@ -967,21 +969,25 @@ playBtn.addEventListener("click", () => {
   const proj3 = (px,py,pz) => { const s=FOV/(FOV+pz); return [VCX+px*s, VCY+py*s, s]; };
 
   // --- Scene objects & stars ------------------------------------
-  function spawnObj(i, z) {
-    const sz = 44 + Math.random() * 56;
+  // spdF = object speed as a fraction of camera speed:
+  //   < 1 we overtake it (drifts toward us), > 1 it pulls away / passes us.
+  function spawnObj(i, z, spdF) {
+    const lane = (Math.random() * LANES.length) | 0;
+    const f = spdF !== undefined ? spdF : 0.45 + Math.random() * 0.95;
     return {
-      sh:  SHAPES[i % SHAPES.length],
-      x:   (Math.random()-0.5) * ROAD_W * 0.9,
-      z:   z,
+      sh:   SHAPES[i % SHAPES.length],
+      lane: lane,
+      x:    LANES[lane] * ROAD_W,
+      z:    z,
       ax:  Math.random()*6.28, ay: Math.random()*6.28, az: Math.random()*6.28,
       dax: (Math.random()-0.5)*0.018,
       day: (Math.random()-0.5)*0.024,
       daz: (Math.random()-0.5)*0.013,
-      sz:  sz,
-      spd: 1.5 + Math.random()*1.8,
+      sz:   18 + Math.random()*22,
+      spdF: f, tgtSpdF: f,
     };
   }
-  const objs  = Array.from({length:6}, (_,i) => spawnObj(i, 200 + i*240));
+  const objs  = Array.from({length:7}, (_,i) => spawnObj(i, 200 + i*280));
   const stars = Array.from({length:100}, () => ({
     x: (Math.random()-0.5)*1400,
     y: -(55 + Math.random()*280),
@@ -993,6 +999,8 @@ playBtn.addEventListener("click", () => {
     if (!W) return;
     cx2.clearRect(0, 0, W, H);
     const spd = 1 + (urg||0) * 0.18;
+    const camSpd = 3.2 * spd;        // our flying speed over the road
+    roll += camSpd * 0.018;
 
     // Stars — sky only (above horizon)
     stars.forEach(st => {
@@ -1016,16 +1024,16 @@ playBtn.addEventListener("click", () => {
     cx2.fillStyle = '#08061a';
     cx2.fill();
 
-    // Road cross-lines (log-spaced for even perspective feel)
+    // Road cross-lines — log-spaced, scrolling toward us as we fly
     const N = 18;
-    for (let i = 0; i <= N; i++) {
-      const t = i / N;
+    for (let i = 0; i < N; i++) {
+      const t = ((i + roll) % N) / N;
       const z = Z_FAR * Math.pow(Z_NEAR / Z_FAR, t);
       const sc = FOV / (FOV + z);
       const xl = VCX - ROAD_W * sc, xr = VCX + ROAD_W * sc;
       const yl = VCY + ROAD_Y * sc;
-      const fade = Math.pow(1 - t, 0.5);
-      cx2.strokeStyle = `hsla(${h},80%,60%,${(fade*0.28).toFixed(2)})`;
+      const fade = Math.min(1, t * 3) * Math.pow(1 - t, 0.35);
+      cx2.strokeStyle = `hsla(${h},80%,60%,${(fade*0.30).toFixed(2)})`;
       cx2.lineWidth = 0.4 + t * 1.2;
       cx2.beginPath(); cx2.moveTo(xl, yl); cx2.lineTo(xr, yl); cx2.stroke();
     }
@@ -1044,19 +1052,25 @@ playBtn.addEventListener("click", () => {
     });
     cx2.restore();
 
-    // Center lane dashes
-    for (let i = 0; i < 14; i++) {
-      const t1 =  i        / 14;
-      const t2 = (i + 0.45) / 14;
-      const z1 = Z_FAR * Math.pow(Z_NEAR / Z_FAR, t1);
-      const z2 = Z_FAR * Math.pow(Z_NEAR / Z_FAR, t2);
-      const y1 = VCY + ROAD_Y * FOV / (FOV + z1);
-      const y2 = VCY + ROAD_Y * FOV / (FOV + z2);
-      const fade = Math.pow(1 - t1, 0.4);
-      cx2.strokeStyle = `hsla(${h},80%,75%,${(fade*0.36).toFixed(2)})`;
-      cx2.lineWidth = 0.5 + (1 - t1) * 1.5;
-      cx2.beginPath(); cx2.moveTo(VCX, y1); cx2.lineTo(VCX, y2); cx2.stroke();
-    }
+    // Lane divider dashes — 3 boundaries between 4 lanes, scrolling with us
+    const D = 14;
+    [-0.44, 0, 0.44].forEach(lf => {
+      const lx = lf * ROAD_W;
+      for (let i = 0; i < D; i++) {
+        const t1 = ((i + roll * D / N) % D) / D;
+        const t2 = Math.min(t1 + 0.45 / D, 1);
+        const z1 = Z_FAR * Math.pow(Z_NEAR / Z_FAR, t1);
+        const z2 = Z_FAR * Math.pow(Z_NEAR / Z_FAR, t2);
+        const s1 = FOV / (FOV + z1), s2 = FOV / (FOV + z2);
+        const fade = Math.min(1, t1 * 3) * Math.pow(1 - t1, 0.3);
+        cx2.strokeStyle = `hsla(${h},80%,75%,${(fade*0.34).toFixed(2)})`;
+        cx2.lineWidth = 0.5 + t1 * 1.5;
+        cx2.beginPath();
+        cx2.moveTo(VCX + lx * s1, VCY + ROAD_Y * s1);
+        cx2.lineTo(VCX + lx * s2, VCY + ROAD_Y * s2);
+        cx2.stroke();
+      }
+    });
 
     // Fog at horizon — covers road vanishing zone
     const fogSpan = Math.max(12, (ryNL - VCY) * 0.20);
@@ -1080,12 +1094,26 @@ playBtn.addEventListener("click", () => {
     cx2.beginPath(); cx2.moveTo(0, VCY); cx2.lineTo(W, VCY); cx2.stroke();
     cx2.restore();
 
-    // Wireframe objects — ride on road surface
+    // Wireframe racers — ride the road at their own pace, swapping lanes
     objs.forEach((obj, oi) => {
-      obj.z -= obj.spd * spd;
+      // racing dynamics: drift toward a target speed, occasionally pick new ones
+      if (Math.random() < 0.005) obj.tgtSpdF = 0.45 + Math.random() * 0.95;
+      obj.spdF += (obj.tgtSpdF - obj.spdF) * 0.012;
+      if (Math.random() < 0.004) {
+        obj.lane = Math.max(0, Math.min(LANES.length - 1,
+          obj.lane + (Math.random() < 0.5 ? -1 : 1)));
+      }
+      obj.x += (LANES[obj.lane] * ROAD_W - obj.x) * 0.035;
+      obj.z -= camSpd * (1 - obj.spdF);
       obj.ax += obj.dax; obj.ay += obj.day; obj.az += obj.daz;
-      if (obj.z < Z_NEAR * 0.4) {
-        Object.assign(obj, spawnObj(oi, Z_FAR * 0.88 + Math.random()*280));
+      if (obj.z < Z_NEAR * 0.3) {
+        // we flew past it — rejoin the race ahead, going slower than us
+        Object.assign(obj, spawnObj(oi, Z_FAR * 0.85 + Math.random()*300,
+                                    0.45 + Math.random()*0.4));
+      } else if (obj.z > Z_FAR) {
+        // it pulled away into the fog — a new one overtakes us from behind
+        Object.assign(obj, spawnObj(oi, Z_NEAR * 0.6,
+                                    1.08 + Math.random()*0.32));
       }
       if (obj.z <= 1) return;
 
