@@ -969,11 +969,11 @@ playBtn.addEventListener("click", () => {
   const proj3 = (px,py,pz) => { const s=FOV/(FOV+pz); return [VCX+px*s, VCY+py*s, s]; };
 
   // --- Scene objects & stars ------------------------------------
-  // spdF = object speed as a fraction of camera speed:
-  //   < 1 we overtake it (drifts toward us), > 1 it pulls away / passes us.
+  // spdF = object speed as a fraction of camera speed; always > 1 so every
+  // racer pulls away from us toward the vanishing point.
   function spawnObj(i, z, spdF) {
     const lane = (Math.random() * LANES.length) | 0;
-    const f = spdF !== undefined ? spdF : 0.35 + Math.random() * 1.1;
+    const f = spdF !== undefined ? spdF : 1.15 + Math.random() * 0.65;
     return {
       sh:   SHAPES[i % SHAPES.length],
       lane: lane,
@@ -984,7 +984,7 @@ playBtn.addEventListener("click", () => {
       day: (Math.random()-0.5)*0.024,
       daz: (Math.random()-0.5)*0.013,
       sz:   18 + Math.random()*22,
-      spdF: f, tgtSpdF: f,
+      spdF: f, tgtSpdF: f, cool: 0,
     };
   }
   const objs  = Array.from({length:7}, (_,i) => spawnObj(i, 200 + i*280));
@@ -1090,26 +1090,36 @@ playBtn.addEventListener("click", () => {
     cx2.beginPath(); cx2.moveTo(0, VCY); cx2.lineTo(W, VCY); cx2.stroke();
     cx2.restore();
 
-    // Wireframe racers — ride the road at their own pace, swapping lanes
+    // Wireframe racers — all faster than us, racing toward the horizon
     objs.forEach((obj, oi) => {
-      // racing dynamics: drift toward a target speed, occasionally pick new ones
-      if (Math.random() < 0.006) obj.tgtSpdF = 0.35 + Math.random() * 1.1;
+      // surge toward a target speed, re-rolled occasionally (always > camera)
+      if (Math.random() < 0.006) obj.tgtSpdF = 1.15 + Math.random() * 0.65;
       obj.spdF += (obj.tgtSpdF - obj.spdF) * 0.02;
-      if (Math.random() < 0.006) {
-        obj.lane = Math.max(0, Math.min(LANES.length - 1,
-          obj.lane + (Math.random() < 0.5 ? -1 : 1)));
+
+      // overtaking: a slower racer close ahead in our lane forces a decision
+      if (obj.cool > 0) obj.cool--;
+      const ahead = objs.find(o => o !== obj && o.lane === obj.lane &&
+        o.z > obj.z && o.z - obj.z < 330 && o.spdF < obj.spdF);
+      if (ahead) {
+        if (obj.cool === 0) {
+          const free = [obj.lane - 1, obj.lane + 1].filter(l =>
+            l >= 0 && l < LANES.length &&
+            !objs.some(o => o !== obj && o.lane === l && Math.abs(o.z - obj.z) < 280));
+          if (free.length) {
+            obj.lane = free[(Math.random() * free.length) | 0];
+            obj.cool = 90;
+          }
+        }
+        // boxed in — draft behind until a lane opens
+        if (obj.lane === ahead.lane) obj.spdF += (ahead.spdF - obj.spdF) * 0.08;
       }
+
       obj.x += (LANES[obj.lane] * ROAD_W - obj.x) * 0.035;
-      obj.z -= camSpd * (1 - obj.spdF);
+      obj.z += camSpd * (obj.spdF - 1);
       obj.ax += obj.dax; obj.ay += obj.day; obj.az += obj.daz;
-      if (obj.z < Z_NEAR * 0.3) {
-        // we flew past it — rejoin the race ahead, going slower than us
-        Object.assign(obj, spawnObj(oi, Z_FAR * 0.85 + Math.random()*300,
-                                    0.45 + Math.random()*0.4));
-      } else if (obj.z > Z_FAR) {
-        // it pulled away into the fog — a new one overtakes us from behind
-        Object.assign(obj, spawnObj(oi, Z_NEAR * 0.6,
-                                    1.08 + Math.random()*0.32));
+      if (obj.z > 1900 || obj.z < Z_NEAR * 0.3) {
+        // vanished into the fog — a new racer overtakes us from behind
+        Object.assign(obj, spawnObj(oi, Z_NEAR * 0.6));
       }
       if (obj.z <= 1) return;
 
@@ -1121,7 +1131,7 @@ playBtn.addEventListener("click", () => {
       });
 
       const near    = Math.max(0, 1 - obj.z / Z_FAR);
-      const fogFade = Math.max(0, Math.min(1, (1400 - obj.z) / 800));
+      const fogFade = Math.max(0, Math.min(1, (1900 - obj.z) / 600));
       const alpha   = (0.12 + near * 0.76) * fogFade;
       if (alpha < 0.03) return;
       const bright  = 50 + near * 24;
