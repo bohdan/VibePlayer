@@ -922,7 +922,7 @@ playBtn.addEventListener("click", () => {
   let W, H, VCX, VCY, FOV;
   const Z_NEAR = 55, Z_FAR = 2200, ROAD_W = 230, ROAD_Y = 470;
   const LANES = [-0.66, -0.22, 0.22, 0.66];   // lane centers, fraction of ROAD_W
-  let roll = 0;                                // road scroll accumulator
+  let dist = 0;                                // world distance flown
 
   function resize() {
     W = cv.width  = window.innerWidth;
@@ -973,7 +973,7 @@ playBtn.addEventListener("click", () => {
   //   < 1 we overtake it (drifts toward us), > 1 it pulls away / passes us.
   function spawnObj(i, z, spdF) {
     const lane = (Math.random() * LANES.length) | 0;
-    const f = spdF !== undefined ? spdF : 0.45 + Math.random() * 0.95;
+    const f = spdF !== undefined ? spdF : 0.35 + Math.random() * 1.1;
     return {
       sh:   SHAPES[i % SHAPES.length],
       lane: lane,
@@ -999,8 +999,8 @@ playBtn.addEventListener("click", () => {
     if (!W) return;
     cx2.clearRect(0, 0, W, H);
     const spd = 1 + (urg||0) * 0.18;
-    const camSpd = 3.2 * spd;        // our flying speed over the road
-    roll += camSpd * 0.018;
+    const camSpd = 4.5 * spd;        // our flying speed over the road
+    dist += camSpd;
 
     // Stars — sky only (above horizon)
     stars.forEach(st => {
@@ -1024,17 +1024,15 @@ playBtn.addEventListener("click", () => {
     cx2.fillStyle = '#08061a';
     cx2.fill();
 
-    // Road cross-lines — log-spaced, scrolling toward us as we fly
-    const N = 18;
-    for (let i = 0; i < N; i++) {
-      const t = ((i + roll) % N) / N;
-      const z = Z_FAR * Math.pow(Z_NEAR / Z_FAR, t);
+    // Road cross-lines — fixed world spacing, flying past at camera speed
+    const GAP = 110;
+    for (let z = Z_NEAR + GAP - dist % GAP; z <= Z_FAR; z += GAP) {
       const sc = FOV / (FOV + z);
       const xl = VCX - ROAD_W * sc, xr = VCX + ROAD_W * sc;
       const yl = VCY + ROAD_Y * sc;
-      const fade = Math.min(1, t * 3) * Math.pow(1 - t, 0.35);
-      cx2.strokeStyle = `hsla(${h},80%,60%,${(fade*0.30).toFixed(2)})`;
-      cx2.lineWidth = 0.4 + t * 1.2;
+      const near = 1 - z / Z_FAR;
+      cx2.strokeStyle = `hsla(${h},80%,60%,${(Math.pow(near,0.7)*0.30).toFixed(2)})`;
+      cx2.lineWidth = 0.4 + near * 1.4;
       cx2.beginPath(); cx2.moveTo(xl, yl); cx2.lineTo(xr, yl); cx2.stroke();
     }
 
@@ -1052,19 +1050,17 @@ playBtn.addEventListener("click", () => {
     });
     cx2.restore();
 
-    // Lane divider dashes — 3 boundaries between 4 lanes, scrolling with us
-    const D = 14;
+    // Lane divider dashes — 3 boundaries between 4 lanes, world-spaced
+    const DGAP = 160, DLEN = 75;
     [-0.44, 0, 0.44].forEach(lf => {
       const lx = lf * ROAD_W;
-      for (let i = 0; i < D; i++) {
-        const t1 = ((i + roll * D / N) % D) / D;
-        const t2 = Math.min(t1 + 0.45 / D, 1);
-        const z1 = Z_FAR * Math.pow(Z_NEAR / Z_FAR, t1);
-        const z2 = Z_FAR * Math.pow(Z_NEAR / Z_FAR, t2);
+      for (let zd = Z_NEAR - dist % DGAP; zd <= Z_FAR; zd += DGAP) {
+        const z1 = Math.max(zd, Z_NEAR), z2 = Math.min(zd + DLEN, Z_FAR);
+        if (z2 <= z1) continue;
         const s1 = FOV / (FOV + z1), s2 = FOV / (FOV + z2);
-        const fade = Math.min(1, t1 * 3) * Math.pow(1 - t1, 0.3);
-        cx2.strokeStyle = `hsla(${h},80%,75%,${(fade*0.34).toFixed(2)})`;
-        cx2.lineWidth = 0.5 + t1 * 1.5;
+        const near = 1 - z1 / Z_FAR;
+        cx2.strokeStyle = `hsla(${h},80%,75%,${(Math.pow(near,0.6)*0.34).toFixed(2)})`;
+        cx2.lineWidth = 0.5 + near * 1.5;
         cx2.beginPath();
         cx2.moveTo(VCX + lx * s1, VCY + ROAD_Y * s1);
         cx2.lineTo(VCX + lx * s2, VCY + ROAD_Y * s2);
@@ -1097,9 +1093,9 @@ playBtn.addEventListener("click", () => {
     // Wireframe racers — ride the road at their own pace, swapping lanes
     objs.forEach((obj, oi) => {
       // racing dynamics: drift toward a target speed, occasionally pick new ones
-      if (Math.random() < 0.005) obj.tgtSpdF = 0.45 + Math.random() * 0.95;
-      obj.spdF += (obj.tgtSpdF - obj.spdF) * 0.012;
-      if (Math.random() < 0.004) {
+      if (Math.random() < 0.006) obj.tgtSpdF = 0.35 + Math.random() * 1.1;
+      obj.spdF += (obj.tgtSpdF - obj.spdF) * 0.02;
+      if (Math.random() < 0.006) {
         obj.lane = Math.max(0, Math.min(LANES.length - 1,
           obj.lane + (Math.random() < 0.5 ? -1 : 1)));
       }
