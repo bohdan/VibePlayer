@@ -921,8 +921,9 @@ playBtn.addEventListener("click", () => {
   const cv = document.getElementById('bg3d');
   const cx2 = cv.getContext('2d');
   let W, H, VCX, VCY, FOV;
-  const Z_NEAR = 55, Z_FAR = 2200, ROAD_W = 230, ROAD_Y = 470;
-  const LANES = [-0.66, -0.22, 0.22, 0.66];   // lane centers, fraction of ROAD_W
+  const Z_NEAR = 55, Z_FAR = 2200, ROAD_Y = 470, GAP = 110;
+  // 10 lanes centred between grid lines, spanning the wide plane
+  const LANES = Array.from({length: 10}, (_, i) => (i - 4.5) * GAP);
   let dist = 0;                                // world distance flown
   let camSpd = 4.5, urg = 0;                  // updated each frame
 
@@ -971,36 +972,36 @@ playBtn.addEventListener("click", () => {
   const proj3 = (px,py,pz) => { const s=FOV/(FOV+pz); return [VCX+px*s, VCY+py*s, s]; };
 
   // --- Scene objects & stars ------------------------------------
-  // Speed model:
-  //   25%  speedsters: 1.6–2.15× cam (always faster, blast past at any urgency)
+  // Each racer gets ONE constant speed for its whole life, set at spawn
+  // relative to the camera speed at that moment:
+  //   25%  speedsters: 1.6–2.15× cam (always faster, blast past)
   //   75%  pack racers: 0.90 ± spread, spread = 0.30 + urg×0.05
-  //          urg=0 → 0.60–1.20× (gentle, languid)
-  //          urg=7 → 0.20–1.60× (wide — you weave through and some scream past)
-  // Default z position chosen by speed: slow racers spawn far ahead so we
-  // catch them; fast racers spawn close behind and overtake us.
-  function spawnObj(i, z) {
+  //          urg=0 → 0.60–1.20× (everyone languid)
+  //          urg=7 → 0.20–1.60× (wide field to weave through)
+  // Default z chosen by speed: slow racers spawn far ahead so we catch
+  // them; fast racers spawn close behind and overtake us.
+  function spawnObj(i, z, f) {
     const lane = (Math.random() * LANES.length) | 0;
     const spread = 0.30 + urg * 0.05;
-    const fBase = Math.random() < 0.25
-      ? 1.6 + Math.random() * 0.55                             // speedster
-      : Math.max(0.28, 0.90 + (Math.random() - 0.5) * 2 * spread); // pack
-    const v = camSpd * fBase;
+    const fBase = f !== undefined ? f : (Math.random() < 0.25
+      ? 1.6 + Math.random() * 0.55                                  // speedster
+      : Math.max(0.28, 0.90 + (Math.random() - 0.5) * 2 * spread)); // pack
     const defZ = fBase < 1.0
       ? 700  + Math.random() * 1000   // slow: far ahead, we'll catch it
       : Z_NEAR + Math.random() * 200; // fast: close, it'll overtake us
     return {
       sh:   SHAPES[i % SHAPES.length],
-      lane, x: LANES[lane] * ROAD_W,
+      lane, x: LANES[lane],
       z:    z !== undefined ? z : defZ,
       ax:  Math.random()*6.28, ay: Math.random()*6.28, az: Math.random()*6.28,
       dax: (Math.random()-0.5)*0.018,
       day: (Math.random()-0.5)*0.024,
       daz: (Math.random()-0.5)*0.013,
       sz:   18 + Math.random()*22,
-      spd: v, tgtSpd: v, ref: camSpd, fBase, cool: 0, pulse: 0,
+      spd: camSpd * fBase, cool: 0, pulse: 0,
     };
   }
-  const objs  = Array.from({length:7}, (_,i) => spawnObj(i));
+  const objs  = Array.from({length:9}, (_,i) => spawnObj(i));
   // Lead-melody notes queued by leadNote() with their audio timestamps;
   // each one fires a pulse on a racer the moment it becomes audible.
   const vizN = window._vizNotes = [];
@@ -1030,63 +1031,36 @@ playBtn.addEventListener("click", () => {
       cx2.beginPath(); cx2.arc(sx, sy, Math.max(sc*3.2, 0.4), 0, 6.28); cx2.fill();
     });
 
-    // Road surface — trapezoid converging to vanishing point (VCX, VCY)
+    // Ground plane — infinitely wide, dark fill below the horizon
     const sNear = FOV / (FOV + Z_NEAR);
-    const rxNL = VCX - ROAD_W * sNear, ryNL = VCY + ROAD_Y * sNear;
-    const rxNR = VCX + ROAD_W * sNear, ryNR = ryNL;
-    cx2.beginPath();
-    cx2.moveTo(rxNL, ryNL); cx2.lineTo(rxNR, ryNR);
-    cx2.lineTo(VCX + 1, VCY); cx2.lineTo(VCX - 1, VCY);
-    cx2.closePath();
+    const sFar  = FOV / (FOV + Z_FAR);
     cx2.fillStyle = '#08061a';
-    cx2.fill();
+    cx2.fillRect(0, VCY, W, H - VCY);
 
-    // Road cross-lines — fixed world spacing, flying past at camera speed
-    const GAP = 110;
+    // Cross-lines — full width, fixed world spacing, flying past at camSpd
     for (let z = Z_NEAR + GAP - dist % GAP; z <= Z_FAR; z += GAP) {
       const sc = FOV / (FOV + z);
-      const xl = VCX - ROAD_W * sc, xr = VCX + ROAD_W * sc;
       const yl = VCY + ROAD_Y * sc;
       const near = 1 - z / Z_FAR;
       cx2.strokeStyle = `hsla(${h},80%,60%,${(Math.pow(near,0.7)*0.30).toFixed(2)})`;
       cx2.lineWidth = 0.4 + near * 1.4;
-      cx2.beginPath(); cx2.moveTo(xl, yl); cx2.lineTo(xr, yl); cx2.stroke();
+      cx2.beginPath(); cx2.moveTo(0, yl); cx2.lineTo(W, yl); cx2.stroke();
     }
 
-    // Road edge glow lines — from vanishing point to near corners
-    cx2.save();
-    cx2.shadowColor = `hsl(${h},100%,65%)`; cx2.shadowBlur = 8;
-    cx2.lineWidth = 1.5;
-    [[rxNL, ryNL], [rxNR, ryNR]].forEach(([ex, ey]) => {
-      const eg = cx2.createLinearGradient(VCX, VCY, ex, ey);
-      eg.addColorStop(0,   `hsla(${h},100%,70%,0.08)`);
-      eg.addColorStop(0.5, `hsla(${h},100%,70%,0.62)`);
-      eg.addColorStop(1,   `hsla(${h},100%,70%,0.35)`);
-      cx2.strokeStyle = eg;
-      cx2.beginPath(); cx2.moveTo(VCX, VCY); cx2.lineTo(ex, ey); cx2.stroke();
-    });
-    cx2.restore();
+    // Longitudinal grid lines — converge on the vanishing point
+    const maxWx = Math.ceil((W * 0.5 / sNear + GAP) / GAP) * GAP;
+    for (let wx = -maxWx; wx <= maxWx; wx += GAP) {
+      const cf = 1 - Math.min(Math.abs(wx) / maxWx, 1) * 0.45; // dim outer lines
+      cx2.strokeStyle = `hsla(${h},80%,60%,${(0.22 * cf).toFixed(2)})`;
+      cx2.lineWidth = 0.7;
+      cx2.beginPath();
+      cx2.moveTo(VCX + wx * sNear, VCY + ROAD_Y * sNear);
+      cx2.lineTo(VCX + wx * sFar,  VCY + ROAD_Y * sFar);
+      cx2.stroke();
+    }
 
-    // Lane divider dashes — 3 boundaries between 4 lanes, world-spaced
-    const DGAP = 160, DLEN = 75;
-    [-0.44, 0, 0.44].forEach(lf => {
-      const lx = lf * ROAD_W;
-      for (let zd = Z_NEAR - dist % DGAP; zd <= Z_FAR; zd += DGAP) {
-        const z1 = Math.max(zd, Z_NEAR), z2 = Math.min(zd + DLEN, Z_FAR);
-        if (z2 <= z1) continue;
-        const s1 = FOV / (FOV + z1), s2 = FOV / (FOV + z2);
-        const near = 1 - z1 / Z_FAR;
-        cx2.strokeStyle = `hsla(${h},80%,75%,${(Math.pow(near,0.6)*0.34).toFixed(2)})`;
-        cx2.lineWidth = 0.5 + near * 1.5;
-        cx2.beginPath();
-        cx2.moveTo(VCX + lx * s1, VCY + ROAD_Y * s1);
-        cx2.lineTo(VCX + lx * s2, VCY + ROAD_Y * s2);
-        cx2.stroke();
-      }
-    });
-
-    // Fog at horizon — covers road vanishing zone
-    const fogSpan = Math.max(12, (ryNL - VCY) * 0.20);
+    // Fog at horizon — covers the vanishing zone
+    const fogSpan = Math.max(12, ROAD_Y * sNear * 0.20);
     const fogGrad = cx2.createLinearGradient(0, VCY - 2, 0, VCY + fogSpan);
     fogGrad.addColorStop(0,    `hsla(${h},40%,6%,0.92)`);
     fogGrad.addColorStop(0.35, `hsla(${h},40%,6%,0.55)`);
@@ -1120,42 +1094,33 @@ playBtn.addEventListener("click", () => {
       if (vizN.length > 64) vizN.splice(0, vizN.length - 64);
     }
 
-    // Wireframe racers
+    // Wireframe racers — constant speed each; lane changes only when blocked
     objs.forEach((obj, oi) => {
       obj.pulse *= 0.91;
-      // small variations around each racer's character speed (speedsters stay fast)
-      if (Math.random() < 0.006)
-        obj.tgtSpd = obj.ref * obj.fBase * (0.88 + Math.random() * 0.24);
-      obj.spd += (obj.tgtSpd - obj.spd) * 0.02;
 
-      // overtaking: pull into a free adjacent lane when blocked by a slower racer
       if (obj.cool > 0) obj.cool--;
       const ahead = objs.find(o => o !== obj && o.lane === obj.lane &&
-        o.z > obj.z && o.z - obj.z < 330 && o.spd < obj.spd);
-      if (ahead) {
-        if (obj.cool === 0) {
-          const free = [obj.lane - 1, obj.lane + 1].filter(l =>
-            l >= 0 && l < LANES.length &&
-            !objs.some(o => o !== obj && o.lane === l && Math.abs(o.z - obj.z) < 280));
-          if (free.length) { obj.lane = free[(Math.random()*free.length)|0]; obj.cool = 90; }
-        }
-        if (obj.lane === ahead.lane) obj.spd += (ahead.spd - obj.spd) * 0.08;
+        o.z > obj.z && o.z - obj.z < 300 && o.spd < obj.spd);
+      if (ahead && obj.cool === 0) {
+        const free = [obj.lane - 1, obj.lane + 1].filter(l =>
+          l >= 0 && l < LANES.length &&
+          !objs.some(o => o !== obj && o.lane === l && Math.abs(o.z - obj.z) < 320));
+        if (free.length) { obj.lane = free[(Math.random()*free.length)|0]; }
+        obj.cool = 240;   // long cooldown keeps overtakes rare
       }
 
-      obj.x += (LANES[obj.lane] * ROAD_W - obj.x) * 0.035;
+      obj.x += (LANES[obj.lane] - obj.x) * 0.03;
       obj.z += obj.spd - camSpd;
       obj.ax += obj.dax; obj.ay += obj.day; obj.az += obj.daz;
 
       if (obj.z < Z_NEAR * 0.3) {
-        // we overtook it — new faster racer enters from close behind
-        const nf = 1.08 + Math.random() * (0.55 + urg * 0.06);
-        Object.assign(obj, spawnObj(oi, Z_NEAR * 0.4));
-        obj.spd = camSpd * nf; obj.tgtSpd = obj.spd; obj.ref = camSpd; obj.fBase = nf;
+        // we overtook it — a faster racer enters from close behind
+        Object.assign(obj, spawnObj(oi, Z_NEAR * 0.4,
+                                    1.08 + Math.random() * (0.55 + urg * 0.06)));
       } else if (obj.z > 1900) {
-        // pulled away into fog — new slow one spawns far ahead for us to catch
-        const nf = 0.42 + Math.random() * 0.45;
-        Object.assign(obj, spawnObj(oi, 800 + Math.random() * 900));
-        obj.spd = camSpd * nf; obj.tgtSpd = obj.spd; obj.ref = camSpd; obj.fBase = nf;
+        // it pulled away into fog — a slow one appears far ahead to catch
+        Object.assign(obj, spawnObj(oi, 800 + Math.random() * 900,
+                                    0.42 + Math.random() * 0.45));
       }
       if (obj.z <= 1) return;
 
