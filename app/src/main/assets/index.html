@@ -980,8 +980,9 @@ playBtn.addEventListener("click", () => {
   // few there are still scream past at 1.6-2.15x.
   //   urg=0: 25% speedsters, pack 0.60-1.20x
   //   urg=7: ~8% speedsters, pack ~0.15-0.85x
-  // Default z chosen by speed: slow racers spawn far ahead so we catch
-  // them; fast racers spawn close behind and overtake us.
+  // Default z chosen by speed: slow racers materialise beyond the fog
+  // wall (invisible) and fade in from the vanishing point as we close
+  // in; fast racers enter close behind and overtake us.
   function spawnObj(i, z, f) {
     const lane = (Math.random() * LANES.length) | 0;
     const spdShare = Math.max(0.08, 0.25 - urg * 0.025);
@@ -991,7 +992,7 @@ playBtn.addEventListener("click", () => {
       ? 1.6 + Math.random() * 0.55                                    // speedster
       : Math.max(0.15, center + (Math.random() - 0.5) * 2 * spread)); // pack
     const defZ = fBase < 1.0
-      ? 700  + Math.random() * 1000   // slow: far ahead, we'll catch it
+      ? 1950 + Math.random() * 200    // slow: hidden in the fog ahead
       : Z_NEAR + Math.random() * 200; // fast: close, it'll overtake us
     return {
       sh:   SHAPES[i % SHAPES.length],
@@ -1117,10 +1118,11 @@ playBtn.addEventListener("click", () => {
       obj.z += obj.spd - camSpd;
       obj.ax += obj.dax; obj.ay += obj.day; obj.az += obj.daz;
 
-      if (obj.z < Z_NEAR * 0.3 || obj.z > 1900) {
-        // left the scene either way — replacement drawn from the current
-        // urgency mix; its speed decides where it enters (slow: far ahead
-        // for us to catch, fast: close behind to pass us)
+      if (obj.z < Z_NEAR * 0.3 || (obj.z > 1900 && obj.spd > camSpd)) {
+        // we passed it, or it outran us into the fog — replacement drawn
+        // from the current urgency mix; its speed decides where it enters
+        // (slow: beyond the fog ahead, fast: close behind to pass us).
+        // Slow racers above the fog line are still inbound, not culled.
         Object.assign(obj, spawnObj(oi));
       }
       if (obj.z <= 1) return;
