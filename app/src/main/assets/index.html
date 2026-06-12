@@ -44,21 +44,10 @@
   .stepper button { width: 40px; height: 40px; border-radius: 8px;
     border: 1px solid #2c2a3a; background: transparent; color: #b9b6c9; font-size: 18px; }
   .stepper button:disabled { opacity: 0.28; cursor: default; }
-  .urg-row { display: flex; align-items: center; gap: 8px; width: min(380px, 88vw); }
-  .urg-bar { display: flex; gap: 3px; flex: 1; }
-  .urg-seg { flex: 1; height: 30px; padding: 0; border: 1px solid #252336;
-    background: transparent; color: #35324a; font-family: inherit;
-    font-size: 7px; letter-spacing: 0.12em; text-transform: uppercase;
-    cursor: pointer; border-radius: 3px;
-    transition: border-color 0.2s, color 0.2s, background 0.2s, box-shadow 0.2s; }
-  .urg-seg.active { border-color: var(--accent); color: var(--accent);
-    background: hsla(var(--hue), 90%, 60%, 0.10);
-    box-shadow: 0 0 8px hsla(var(--hue), 90%, 60%, 0.42); }
-  .urg-seg.go-lock { opacity: 0.35; pointer-events: none; }
   .go-btn { font-family: inherit; font-size: 9px; letter-spacing: 0.28em; text-transform: uppercase;
-    padding: 0 12px; height: 30px; border-radius: 15px;
+    padding: 0 22px; height: 30px; border-radius: 15px;
     border: 1px solid #2c2a3a; background: transparent; color: #6d6a80; cursor: pointer;
-    transition: border-color 0.3s, color 0.3s, box-shadow 0.3s; flex-shrink: 0; }
+    transition: border-color 0.3s, color 0.3s, box-shadow 0.3s; }
   .go-btn.active { border-color: var(--accent); color: var(--accent);
     box-shadow: 0 0 10px hsla(var(--hue), 90%, 60%, 0.3); }
   .pace-hint { font-size: 9.5px; letter-spacing: 0.22em; text-transform: uppercase;
@@ -97,11 +86,12 @@
       <span id="playIcon">&#9654;</span>
     </button>
     <div class="row">
-      <div class="urg-row">
-        <div class="urg-bar" id="urgBar"></div>
-        <button class="go-btn" id="goBtn" aria-label="Toggle on the go mode">go</button>
-      </div>
+      <span class="label">urgency</span>
+      <input type="range" id="urgSlider" min="0" max="7" step="1" value="0" aria-label="Urgency" style="width:min(280px,72vw)">
       <span class="pace-hint" id="paceHint"></span>
+    </div>
+    <div class="row">
+      <button class="go-btn" id="goBtn" aria-label="Toggle on the go mode">go</button>
     </div>
     <div class="row">
       <span class="label">mode</span>
@@ -621,18 +611,42 @@ function padChord(e, when, chord, barDur, high) {
   });
 }
 
+// Snap a scale degree to the nearest chord tone, staying within [0,14].
+function snapToChord(deg, chord, scale, root) {
+  let best = deg, bestDist = 99;
+  for (let d = 0; d <= 14; d++) {
+    const pc = ((degToMidi(d, scale, root) - chord.r) % 12 + 12) % 12;
+    if (chord.iv.includes(pc)) {
+      const dist = Math.abs(d - deg);
+      if (dist < bestDist) { bestDist = dist; best = d; }
+    }
+  }
+  return best;
+}
+
 function nextLeadDegree(e, chord, s) {
+  let deg;
   if (s % 8 === 0 || Math.random() < 0.2) {
     const targetMidi = chord.r + 24 + pick(chord.iv);
     let best = e.leadDeg, bestDist = 99;
-    for (let deg = 0; deg <= 14; deg++) {
-      const dist = Math.abs(degToMidi(deg, e.mode.scale, e.mode.root) - targetMidi);
-      if (dist < bestDist) { bestDist = dist; best = deg; }
+    for (let d = 0; d <= 14; d++) {
+      const dist = Math.abs(degToMidi(d, e.mode.scale, e.mode.root) - targetMidi);
+      if (dist < bestDist) { bestDist = dist; best = d; }
     }
-    return best;
+    deg = best;
+  } else {
+    const move = Math.random() < 0.7 ? pick([-1, 1]) : pick([-2, 2, 3, -3]);
+    deg = Math.max(0, Math.min(14, e.leadDeg + move));
   }
-  const move = Math.random() < 0.7 ? pick([-1, 1]) : pick([-2, 2, 3, -3]);
-  return Math.max(0, Math.min(14, e.leadDeg + move));
+  // Bias toward chord tones: high probability when sparse, relaxes as density grows.
+  const snapProb = e.cur.density < 0.30 ? 0.80
+                 : e.cur.density < 0.55 ? 0.55
+                 : e.cur.density < 0.85 ? 0.28 : 0.10;
+  const pc = ((degToMidi(deg, e.mode.scale, e.mode.root) - chord.r) % 12 + 12) % 12;
+  if (!chord.iv.includes(pc) && Math.random() < snapProb) {
+    deg = snapToChord(deg, chord, e.mode.scale, e.mode.root);
+  }
+  return deg;
 }
 
 function scheduleStep(e) {
@@ -714,6 +728,12 @@ function scheduleStep(e) {
       const prevDeg = e.leadDeg;
       if (themeHit) {
         e.leadDeg = e.section.themeDegrees[s];
+        // Recalled degree was recorded over a potentially different chord; snap when sparse.
+        const tSnapProb = d < 0.30 ? 0.70 : d < 0.55 ? 0.40 : 0.15;
+        const tpc = ((degToMidi(e.leadDeg, e.mode.scale, e.mode.root) - chord.r) % 12 + 12) % 12;
+        if (!chord.iv.includes(tpc) && Math.random() < tSnapProb) {
+          e.leadDeg = snapToChord(e.leadDeg, chord, e.mode.scale, e.mode.root);
+        }
       } else {
         e.leadDeg = nextLeadDegree(e, chord, s);
         e.recording[s] = e.leadDeg; // record for next section's theme
@@ -733,8 +753,9 @@ function scheduleStep(e) {
     if ((s + e.section.cpOffset) % cpRate === 0) {
       const dir = e.prevLeadDir || (Math.random() < 0.5 ? 1 : -1);
       e.cpDeg = Math.max(0, Math.min(6, e.cpDeg - dir * pick([1, 1, 2])));
-      // Occasionally snap to a chord tone in the lower register
-      if (Math.random() < 0.35) {
+      // Snap to a chord tone — more aggressively when texture is sparse.
+      const cpSnapP = d < 0.40 ? 0.72 : d < 0.70 ? 0.50 : 0.35;
+      if (Math.random() < cpSnapP) {
         const target = (chord.r + pick(chord.iv)) % 12;
         let best = e.cpDeg, bestDist = 99;
         for (let deg = 0; deg <= 6; deg++) {
@@ -838,26 +859,16 @@ function notifyNative(isPlaying) {
   }
 }
 
-// Build urgency bar once
-(function() {
-  const bar = $("urgBar");
-  const abbr = ["zen","fcs","flw","drv","srg","crs","ovr","mlt"];
-  STATES.forEach((st, i) => {
-    const btn = document.createElement("button");
-    btn.className = "urg-seg";
-    btn.textContent = abbr[i] || st.key.slice(0,3);
-    btn.setAttribute("aria-label", st.key);
-    btn.addEventListener("click", () => { if (!goMode) { urgency = i; update(); } });
-    bar.appendChild(btn);
-  });
-})();
+$("urgSlider").addEventListener("input", (ev) => {
+  if (!goMode) { urgency = parseInt(ev.target.value, 10); update(); }
+});
 
 function update() {
   const st = STATES[urgency];
   $("vibeName").textContent = st.key;
   $("trackName").textContent = st.track;
   $("trackSub").textContent = "procedural synthwave \u00B7 " + st.bpm + " bpm";
-  document.querySelectorAll(".urg-seg").forEach((el, i) => el.classList.toggle("active", i === urgency));
+  $("urgSlider").value = urgency;
   if (engine) {
     engine.target = Object.assign({}, st);
     engine.tierIdx = urgency;
@@ -880,7 +891,7 @@ $("modeNext").addEventListener("click", () => setMode(modeIdx + 1));
 $("goBtn").addEventListener("click", () => {
   goMode = !goMode;
   $("goBtn").classList.toggle("active", goMode);
-  document.querySelectorAll(".urg-seg").forEach(el => el.classList.toggle("go-lock", goMode));
+  $("urgSlider").disabled = goMode;
   $("paceHint").textContent = goMode ? "◎ calibrating…" : "";
   if (window.AndroidBridge?.setGoMode) window.AndroidBridge.setGoMode(goMode);
 });
