@@ -973,19 +973,23 @@ playBtn.addEventListener("click", () => {
 
   // --- Scene objects & stars ------------------------------------
   // Each racer gets ONE constant speed for its whole life, set at spawn
-  // relative to the camera speed at that moment:
-  //   25%  speedsters: 1.6–2.15× cam (always faster, blast past)
-  //   75%  pack racers: 0.90 ± spread, spread = 0.30 + urg×0.05
-  //          urg=0 → 0.60–1.20× (everyone languid)
-  //          urg=7 → 0.20–1.60× (wide field to weave through)
+  // relative to the camera speed at that moment. The mix shifts with
+  // urgency: at rest it's a languid pack around our own pace; at high
+  // speed the pack centre drops well below us (we race above the
+  // traffic, overtaking most of it) and speedsters get rarer - but the
+  // few there are still scream past at 1.6-2.15x.
+  //   urg=0: 25% speedsters, pack 0.60-1.20x
+  //   urg=7: ~8% speedsters, pack ~0.15-0.85x
   // Default z chosen by speed: slow racers spawn far ahead so we catch
   // them; fast racers spawn close behind and overtake us.
   function spawnObj(i, z, f) {
     const lane = (Math.random() * LANES.length) | 0;
-    const spread = 0.30 + urg * 0.05;
-    const fBase = f !== undefined ? f : (Math.random() < 0.25
-      ? 1.6 + Math.random() * 0.55                                  // speedster
-      : Math.max(0.28, 0.90 + (Math.random() - 0.5) * 2 * spread)); // pack
+    const spdShare = Math.max(0.08, 0.25 - urg * 0.025);
+    const center = 0.90 - urg * 0.07;
+    const spread = 0.30 + urg * 0.02;
+    const fBase = f !== undefined ? f : (Math.random() < spdShare
+      ? 1.6 + Math.random() * 0.55                                    // speedster
+      : Math.max(0.15, center + (Math.random() - 0.5) * 2 * spread)); // pack
     const defZ = fBase < 1.0
       ? 700  + Math.random() * 1000   // slow: far ahead, we'll catch it
       : Z_NEAR + Math.random() * 200; // fast: close, it'll overtake us
@@ -1113,14 +1117,11 @@ playBtn.addEventListener("click", () => {
       obj.z += obj.spd - camSpd;
       obj.ax += obj.dax; obj.ay += obj.day; obj.az += obj.daz;
 
-      if (obj.z < Z_NEAR * 0.3) {
-        // we overtook it — a faster racer enters from close behind
-        Object.assign(obj, spawnObj(oi, Z_NEAR * 0.4,
-                                    1.08 + Math.random() * (0.55 + urg * 0.06)));
-      } else if (obj.z > 1900) {
-        // it pulled away into fog — a slow one appears far ahead to catch
-        Object.assign(obj, spawnObj(oi, 800 + Math.random() * 900,
-                                    0.42 + Math.random() * 0.45));
+      if (obj.z < Z_NEAR * 0.3 || obj.z > 1900) {
+        // left the scene either way — replacement drawn from the current
+        // urgency mix; its speed decides where it enters (slow: far ahead
+        // for us to catch, fast: close behind to pass us)
+        Object.assign(obj, spawnObj(oi));
       }
       if (obj.z <= 1) return;
 
