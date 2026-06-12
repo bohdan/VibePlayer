@@ -924,7 +924,7 @@ playBtn.addEventListener("click", () => {
   const Z_NEAR = 55, Z_FAR = 2200, ROAD_W = 230, ROAD_Y = 470;
   const LANES = [-0.66, -0.22, 0.22, 0.66];   // lane centers, fraction of ROAD_W
   let dist = 0;                                // world distance flown
-  let camSpd = 4.5;                            // our speed, follows urgency
+  let camSpd = 4.5, urg = 0;                  // updated each frame
 
   function resize() {
     W = cv.width  = window.innerWidth;
@@ -971,26 +971,36 @@ playBtn.addEventListener("click", () => {
   const proj3 = (px,py,pz) => { const s=FOV/(FOV+pz); return [VCX+px*s, VCY+py*s, s]; };
 
   // --- Scene objects & stars ------------------------------------
-  // Racer speed is an absolute world speed, fixed relative to the camera
-  // speed at SPAWN time (1.15-1.8x). If we later accelerate, old racers
-  // keep their pace and fall behind; their replacements spawn faster.
+  // Speed model:
+  //   25%  speedsters: 1.6–2.15× cam (always faster, blast past at any urgency)
+  //   75%  pack racers: 0.90 ± spread, spread = 0.30 + urg×0.05
+  //          urg=0 → 0.60–1.20× (gentle, languid)
+  //          urg=7 → 0.20–1.60× (wide — you weave through and some scream past)
+  // Default z position chosen by speed: slow racers spawn far ahead so we
+  // catch them; fast racers spawn close behind and overtake us.
   function spawnObj(i, z) {
     const lane = (Math.random() * LANES.length) | 0;
-    const v = camSpd * (1.15 + Math.random() * 0.65);
+    const spread = 0.30 + urg * 0.05;
+    const fBase = Math.random() < 0.25
+      ? 1.6 + Math.random() * 0.55                             // speedster
+      : Math.max(0.28, 0.90 + (Math.random() - 0.5) * 2 * spread); // pack
+    const v = camSpd * fBase;
+    const defZ = fBase < 1.0
+      ? 700  + Math.random() * 1000   // slow: far ahead, we'll catch it
+      : Z_NEAR + Math.random() * 200; // fast: close, it'll overtake us
     return {
       sh:   SHAPES[i % SHAPES.length],
-      lane: lane,
-      x:    LANES[lane] * ROAD_W,
-      z:    z,
+      lane, x: LANES[lane] * ROAD_W,
+      z:    z !== undefined ? z : defZ,
       ax:  Math.random()*6.28, ay: Math.random()*6.28, az: Math.random()*6.28,
       dax: (Math.random()-0.5)*0.018,
       day: (Math.random()-0.5)*0.024,
       daz: (Math.random()-0.5)*0.013,
       sz:   18 + Math.random()*22,
-      spd: v, tgtSpd: v, ref: camSpd, cool: 0, pulse: 0,
+      spd: v, tgtSpd: v, ref: camSpd, fBase, cool: 0, pulse: 0,
     };
   }
-  const objs  = Array.from({length:7}, (_,i) => spawnObj(i, 200 + i*280));
+  const objs  = Array.from({length:7}, (_,i) => spawnObj(i));
   // Lead-melody notes queued by leadNote() with their audio timestamps;
   // each one fires a pulse on a racer the moment it becomes audible.
   const vizN = window._vizNotes = [];
@@ -1001,10 +1011,11 @@ playBtn.addEventListener("click", () => {
   }));
 
   // --- Per-frame draw (called from main RAF loop) ---------------
-  window._draw3DBg = function(h, urg) {
+  window._draw3DBg = function(h, u) {
     if (!W) return;
+    urg = u || 0;
     cx2.clearRect(0, 0, W, H);
-    const spd = 1 + (urg||0) * 0.18;
+    const spd = 1 + urg * 0.18;
     camSpd = 4.5 * spd;              // our flying speed over the road
     dist += camSpd;
 
@@ -1109,14 +1120,15 @@ playBtn.addEventListener("click", () => {
       if (vizN.length > 64) vizN.splice(0, vizN.length - 64);
     }
 
-    // Wireframe racers — fixed world speeds, racing toward the horizon
+    // Wireframe racers
     objs.forEach((obj, oi) => {
       obj.pulse *= 0.91;
-      // surge toward a target speed around the pace it spawned with
-      if (Math.random() < 0.006) obj.tgtSpd = obj.ref * (1.15 + Math.random() * 0.65);
+      // small variations around each racer's character speed (speedsters stay fast)
+      if (Math.random() < 0.006)
+        obj.tgtSpd = obj.ref * obj.fBase * (0.88 + Math.random() * 0.24);
       obj.spd += (obj.tgtSpd - obj.spd) * 0.02;
 
-      // overtaking: a slower racer close ahead in our lane forces a decision
+      // overtaking: pull into a free adjacent lane when blocked by a slower racer
       if (obj.cool > 0) obj.cool--;
       const ahead = objs.find(o => o !== obj && o.lane === obj.lane &&
         o.z > obj.z && o.z - obj.z < 330 && o.spd < obj.spd);
@@ -1125,22 +1137,25 @@ playBtn.addEventListener("click", () => {
           const free = [obj.lane - 1, obj.lane + 1].filter(l =>
             l >= 0 && l < LANES.length &&
             !objs.some(o => o !== obj && o.lane === l && Math.abs(o.z - obj.z) < 280));
-          if (free.length) {
-            obj.lane = free[(Math.random() * free.length) | 0];
-            obj.cool = 90;
-          }
+          if (free.length) { obj.lane = free[(Math.random()*free.length)|0]; obj.cool = 90; }
         }
-        // boxed in — draft behind until a lane opens
         if (obj.lane === ahead.lane) obj.spd += (ahead.spd - obj.spd) * 0.08;
       }
 
       obj.x += (LANES[obj.lane] * ROAD_W - obj.x) * 0.035;
       obj.z += obj.spd - camSpd;
       obj.ax += obj.dax; obj.ay += obj.day; obj.az += obj.daz;
-      if (obj.z > 1900 || obj.z < Z_NEAR * 0.3) {
-        // gone into the fog, or we blew past it — a fresh racer paced off
-        // our CURRENT speed comes up from behind
-        Object.assign(obj, spawnObj(oi, Z_NEAR * 0.6));
+
+      if (obj.z < Z_NEAR * 0.3) {
+        // we overtook it — new faster racer enters from close behind
+        const nf = 1.08 + Math.random() * (0.55 + urg * 0.06);
+        Object.assign(obj, spawnObj(oi, Z_NEAR * 0.4));
+        obj.spd = camSpd * nf; obj.tgtSpd = obj.spd; obj.ref = camSpd; obj.fBase = nf;
+      } else if (obj.z > 1900) {
+        // pulled away into fog — new slow one spawns far ahead for us to catch
+        const nf = 0.42 + Math.random() * 0.45;
+        Object.assign(obj, spawnObj(oi, 800 + Math.random() * 900));
+        obj.spd = camSpd * nf; obj.tgtSpd = obj.spd; obj.ref = camSpd; obj.fBase = nf;
       }
       if (obj.z <= 1) return;
 
