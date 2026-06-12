@@ -40,16 +40,25 @@
   .row { display: flex; flex-direction: column; align-items: center; gap: 12px; }
   .label { font-size: 10px; letter-spacing: 0.3em; text-transform: uppercase; color: #6d6a80;
     margin-left: 0.3em; /* offset trailing letter-spacing so text is optically centred */ }
-  .stepper-wrap { display: flex; align-items: center; gap: 16px; }
   .stepper { display: flex; align-items: center; gap: 14px; }
   .stepper button { width: 40px; height: 40px; border-radius: 8px;
     border: 1px solid #2c2a3a; background: transparent; color: #b9b6c9; font-size: 18px; }
   .stepper button:disabled { opacity: 0.28; cursor: default; }
-  .count { font-size: 22px; min-width: 2ch; color: #e8e6f0; }
+  .urg-row { display: flex; align-items: center; gap: 8px; width: min(380px, 88vw); }
+  .urg-bar { display: flex; gap: 3px; flex: 1; }
+  .urg-seg { flex: 1; height: 30px; padding: 0; border: 1px solid #252336;
+    background: transparent; color: #35324a; font-family: inherit;
+    font-size: 7px; letter-spacing: 0.12em; text-transform: uppercase;
+    cursor: pointer; border-radius: 3px;
+    transition: border-color 0.2s, color 0.2s, background 0.2s, box-shadow 0.2s; }
+  .urg-seg.active { border-color: var(--accent); color: var(--accent);
+    background: hsla(var(--hue), 90%, 60%, 0.10);
+    box-shadow: 0 0 8px hsla(var(--hue), 90%, 60%, 0.42); }
+  .urg-seg.go-lock { opacity: 0.35; pointer-events: none; }
   .go-btn { font-family: inherit; font-size: 9px; letter-spacing: 0.28em; text-transform: uppercase;
-    padding: 0 14px; height: 40px; border-radius: 20px;
+    padding: 0 12px; height: 30px; border-radius: 15px;
     border: 1px solid #2c2a3a; background: transparent; color: #6d6a80; cursor: pointer;
-    transition: border-color 0.3s, color 0.3s, box-shadow 0.3s; }
+    transition: border-color 0.3s, color 0.3s, box-shadow 0.3s; flex-shrink: 0; }
   .go-btn.active { border-color: var(--accent); color: var(--accent);
     box-shadow: 0 0 10px hsla(var(--hue), 90%, 60%, 0.3); }
   .pace-hint { font-size: 9.5px; letter-spacing: 0.22em; text-transform: uppercase;
@@ -88,13 +97,8 @@
       <span id="playIcon">&#9654;</span>
     </button>
     <div class="row">
-      <span class="label">urgency</span>
-      <div class="stepper-wrap">
-        <div class="stepper">
-          <button id="urgMinus" aria-label="Decrease urgency">&minus;</button>
-          <span class="count" id="urgCount">0</span>
-          <button id="urgPlus" aria-label="Increase urgency">+</button>
-        </div>
+      <div class="urg-row">
+        <div class="urg-bar" id="urgBar"></div>
         <button class="go-btn" id="goBtn" aria-label="Toggle on the go mode">go</button>
       </div>
       <span class="pace-hint" id="paceHint"></span>
@@ -834,20 +838,31 @@ function notifyNative(isPlaying) {
   }
 }
 
+// Build urgency bar once
+(function() {
+  const bar = $("urgBar");
+  const abbr = ["zen","fcs","flw","drv","srg","crs","ovr","mlt"];
+  STATES.forEach((st, i) => {
+    const btn = document.createElement("button");
+    btn.className = "urg-seg";
+    btn.textContent = abbr[i] || st.key.slice(0,3);
+    btn.setAttribute("aria-label", st.key);
+    btn.addEventListener("click", () => { if (!goMode) { urgency = i; update(); } });
+    bar.appendChild(btn);
+  });
+})();
+
 function update() {
   const st = STATES[urgency];
   $("vibeName").textContent = st.key;
   $("trackName").textContent = st.track;
   $("trackSub").textContent = "procedural synthwave \u00B7 " + st.bpm + " bpm";
-  $("urgCount").textContent = urgency;
+  document.querySelectorAll(".urg-seg").forEach((el, i) => el.classList.toggle("active", i === urgency));
   if (engine) {
     engine.target = Object.assign({}, st);
     engine.tierIdx = urgency;
   }
 }
-
-$("urgMinus").addEventListener("click", () => { urgency = Math.max(0, urgency - 1); update(); });
-$("urgPlus").addEventListener("click", () => { urgency = Math.min(STATES.length - 1, urgency + 1); update(); });
 
 function setMode(idx) {
   modeIdx = Math.max(0, Math.min(MODES.length - 1, idx));
@@ -865,8 +880,7 @@ $("modeNext").addEventListener("click", () => setMode(modeIdx + 1));
 $("goBtn").addEventListener("click", () => {
   goMode = !goMode;
   $("goBtn").classList.toggle("active", goMode);
-  $("urgMinus").disabled = goMode;
-  $("urgPlus").disabled = goMode;
+  document.querySelectorAll(".urg-seg").forEach(el => el.classList.toggle("go-lock", goMode));
   $("paceHint").textContent = goMode ? "◎ calibrating…" : "";
   if (window.AndroidBridge?.setGoMode) window.AndroidBridge.setGoMode(goMode);
 });
