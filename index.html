@@ -1078,13 +1078,13 @@ playBtn.addEventListener("click", () => {
     if (!W) return;
     urg = u || 0;
     cx2.clearRect(0, 0, W, H);
-    const spd = 1 + urg * 0.18;
-    camSpd = 4.5 * spd;              // our flying speed over the road
+    // Exponential speed curve: 4.5 at zen, ~27 at meltdown (6× range)
+    camSpd = 4.5 * Math.pow(6, urg / 7);
     dist += camSpd;
 
-    // Stars — sky only (above horizon)
+    // Stars — sky only (above horizon); streak speed tied to camSpd
     stars.forEach(st => {
-      st.z -= 2.2 * spd;
+      st.z -= camSpd * 0.52;
       if (st.z < 5) { st.z=1600; st.x=(Math.random()-0.5)*1400; st.y=-(55+Math.random()*280); }
       const [sx, sy, sc] = proj3(st.x, st.y, st.z);
       if (sy > VCY + 4) return;
