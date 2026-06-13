@@ -11,6 +11,9 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.os.Build
@@ -28,6 +31,28 @@ class PlaybackService : Service() {
 
     private var wakeLock: PowerManager.WakeLock? = null
     private var session: MediaSession? = null
+
+    // ---- audio focus ----
+    private var audioManager: AudioManager? = null
+    private var focusRequest: AudioFocusRequest? = null
+    private var pausedByFocusLoss = false
+
+    private val focusListener = AudioManager.OnAudioFocusChangeListener { change ->
+        when (change) {
+            AudioManager.AUDIOFOCUS_GAIN -> {
+                if (pausedByFocusLoss) {
+                    pausedByFocusLoss = false
+                    MediaCommandBus.send("play")
+                }
+            }
+            AudioManager.AUDIOFOCUS_LOSS,
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
+                pausedByFocusLoss = true
+                MediaCommandBus.send("pause")
+            }
+        }
+    }
 
     // ---- accelerometer / pace detection ----
     private var sensorManager: SensorManager? = null
@@ -71,6 +96,26 @@ class PlaybackService : Service() {
                 PaceBus.sendTier(tier)
             }
         }
+    }
+
+    private fun requestAudioFocus() {
+        audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
+        focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                    .build()
+            )
+            .setAcceptsDelayedFocusGain(true)
+            .setOnAudioFocusChangeListener(focusListener)
+            .build()
+            .also { audioManager?.requestAudioFocus(it) }
+    }
+
+    private fun abandonAudioFocus() {
+        focusRequest?.let { audioManager?.abandonAudioFocusRequest(it) }
+        focusRequest = null
     }
 
     private fun registerSensor() {
@@ -148,6 +193,9 @@ class PlaybackService : Service() {
             isActive = true
         }
 
+        // Request audio focus; pause/resume handled via focusListener → MediaCommandBus.
+        if (focusRequest == null) requestAudioFocus()
+
         // If go mode was activated before the service started, begin sensing now.
         if (PaceBus.goMode) registerSensor()
 
@@ -165,6 +213,7 @@ class PlaybackService : Service() {
     override fun onDestroy() {
         PaceBus.goModeChanged = null
         unregisterSensor()
+        abandonAudioFocus()
         session?.release()
         wakeLock?.let { if (it.isHeld) it.release() }
         super.onDestroy()
