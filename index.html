@@ -44,21 +44,10 @@
   .stepper button { width: 40px; height: 40px; border-radius: 8px;
     border: 1px solid #2c2a3a; background: transparent; color: #b9b6c9; font-size: 18px; }
   .stepper button:disabled { opacity: 0.28; cursor: default; }
-  .urg-row { display: flex; align-items: center; gap: 8px; width: min(380px, 88vw); }
-  .urg-bar { display: flex; gap: 3px; flex: 1; }
-  .urg-seg { flex: 1; height: 30px; padding: 0; border: 1px solid #252336;
-    background: transparent; color: #35324a; font-family: inherit;
-    font-size: 7px; letter-spacing: 0.12em; text-transform: uppercase;
-    cursor: pointer; border-radius: 3px;
-    transition: border-color 0.2s, color 0.2s, background 0.2s, box-shadow 0.2s; }
-  .urg-seg.active { border-color: var(--accent); color: var(--accent);
-    background: hsla(var(--hue), 90%, 60%, 0.10);
-    box-shadow: 0 0 8px hsla(var(--hue), 90%, 60%, 0.42); }
-  .urg-seg.go-lock { opacity: 0.35; pointer-events: none; }
   .go-btn { font-family: inherit; font-size: 9px; letter-spacing: 0.28em; text-transform: uppercase;
-    padding: 0 12px; height: 30px; border-radius: 15px;
+    padding: 0 22px; height: 30px; border-radius: 15px;
     border: 1px solid #2c2a3a; background: transparent; color: #6d6a80; cursor: pointer;
-    transition: border-color 0.3s, color 0.3s, box-shadow 0.3s; flex-shrink: 0; }
+    transition: border-color 0.3s, color 0.3s, box-shadow 0.3s; }
   .go-btn.active { border-color: var(--accent); color: var(--accent);
     box-shadow: 0 0 10px hsla(var(--hue), 90%, 60%, 0.3); }
   .pace-hint { font-size: 9.5px; letter-spacing: 0.22em; text-transform: uppercase;
@@ -97,11 +86,12 @@
       <span id="playIcon">&#9654;</span>
     </button>
     <div class="row">
-      <div class="urg-row">
-        <div class="urg-bar" id="urgBar"></div>
-        <button class="go-btn" id="goBtn" aria-label="Toggle on the go mode">go</button>
-      </div>
+      <span class="label">urgency</span>
+      <input type="range" id="urgSlider" min="0" max="7" step="1" value="0" aria-label="Urgency" style="width:min(280px,72vw)">
       <span class="pace-hint" id="paceHint"></span>
+    </div>
+    <div class="row">
+      <button class="go-btn" id="goBtn" aria-label="Toggle on the go mode">go</button>
     </div>
     <div class="row">
       <span class="label">mode</span>
@@ -225,7 +215,7 @@ function fmPianoVoice(e, when, midi, dur, level, dest, vibNode) {
   mod.stop(when + dur + 0.05); car.stop(when + dur + 0.05);
 }
 
-// Marimba: FM with ~3.5× mod ratio gives woody mallet click, fast decay.
+// Marimba: FM with ~3.5x mod ratio gives woody mallet click, fast decay.
 function marimbaVoice(e, when, midi, dur, level, dest) {
   const freq = mtof(midi);
   const car = e.ctx.createOscillator(); car.type = "sine"; car.frequency.value = freq;
@@ -271,7 +261,7 @@ function fluteVoice(e, when, midi, dur, level, dest, vibNode) {
 // numP controls how many drawbar partials are created (fewer = lighter CPU).
 function organVoice(e, when, midi, dur, level, dest, numP = 6) {
   const freq = mtof(midi);
-  // 8' 4' 2⅔' 2' 1⅗' 1' (Principal + Nazard + Tierce)
+  // 8' 4' 2-2/3' 2' 1-3/5' 1' (Principal + Nazard + Tierce)
   const drawbars = [[1,0.70],[2,0.50],[3,0.22],[4,0.28],[5,0.10],[8,0.04]];
   const g = e.ctx.createGain();
   g.gain.setValueAtTime(0, when);
@@ -581,7 +571,7 @@ function padChord(e, when, chord, barDur, high) {
   const pAtk = e.mode.padAtk;
 
   if (e.mode.leadSynth === "organ") {
-    // Organ pad: additive chorus (8'+4'+2⅔') per chord note, no detuning.
+    // Organ pad: additive chorus (8'+4'+2-2/3') per chord note, no detuning.
     // Cap at 3 notes so dom7 chords don't spawn extra oscillators.
     const padNotes = notes.slice(0, 3);
     const lvl = (e.cur.pad * 0.055) / Math.sqrt(padNotes.length) * (high ? 0.7 : 1);
@@ -621,18 +611,42 @@ function padChord(e, when, chord, barDur, high) {
   });
 }
 
+// Snap a scale degree to the nearest chord tone, staying within [0,14].
+function snapToChord(deg, chord, scale, root) {
+  let best = deg, bestDist = 99;
+  for (let d = 0; d <= 14; d++) {
+    const pc = ((degToMidi(d, scale, root) - chord.r) % 12 + 12) % 12;
+    if (chord.iv.includes(pc)) {
+      const dist = Math.abs(d - deg);
+      if (dist < bestDist) { bestDist = dist; best = d; }
+    }
+  }
+  return best;
+}
+
 function nextLeadDegree(e, chord, s) {
+  let deg;
   if (s % 8 === 0 || Math.random() < 0.2) {
     const targetMidi = chord.r + 24 + pick(chord.iv);
     let best = e.leadDeg, bestDist = 99;
-    for (let deg = 0; deg <= 14; deg++) {
-      const dist = Math.abs(degToMidi(deg, e.mode.scale, e.mode.root) - targetMidi);
-      if (dist < bestDist) { bestDist = dist; best = deg; }
+    for (let d = 0; d <= 14; d++) {
+      const dist = Math.abs(degToMidi(d, e.mode.scale, e.mode.root) - targetMidi);
+      if (dist < bestDist) { bestDist = dist; best = d; }
     }
-    return best;
+    deg = best;
+  } else {
+    const move = Math.random() < 0.7 ? pick([-1, 1]) : pick([-2, 2, 3, -3]);
+    deg = Math.max(0, Math.min(14, e.leadDeg + move));
   }
-  const move = Math.random() < 0.7 ? pick([-1, 1]) : pick([-2, 2, 3, -3]);
-  return Math.max(0, Math.min(14, e.leadDeg + move));
+  // Bias toward chord tones: high probability when sparse, relaxes as density grows.
+  const snapProb = e.cur.density < 0.30 ? 0.80
+                 : e.cur.density < 0.55 ? 0.55
+                 : e.cur.density < 0.85 ? 0.28 : 0.10;
+  const pc = ((degToMidi(deg, e.mode.scale, e.mode.root) - chord.r) % 12 + 12) % 12;
+  if (!chord.iv.includes(pc) && Math.random() < snapProb) {
+    deg = snapToChord(deg, chord, e.mode.scale, e.mode.root);
+  }
+  return deg;
 }
 
 function scheduleStep(e) {
@@ -714,6 +728,12 @@ function scheduleStep(e) {
       const prevDeg = e.leadDeg;
       if (themeHit) {
         e.leadDeg = e.section.themeDegrees[s];
+        // Recalled degree was recorded over a potentially different chord; snap when sparse.
+        const tSnapProb = d < 0.30 ? 0.70 : d < 0.55 ? 0.40 : 0.15;
+        const tpc = ((degToMidi(e.leadDeg, e.mode.scale, e.mode.root) - chord.r) % 12 + 12) % 12;
+        if (!chord.iv.includes(tpc) && Math.random() < tSnapProb) {
+          e.leadDeg = snapToChord(e.leadDeg, chord, e.mode.scale, e.mode.root);
+        }
       } else {
         e.leadDeg = nextLeadDegree(e, chord, s);
         e.recording[s] = e.leadDeg; // record for next section's theme
@@ -733,8 +753,9 @@ function scheduleStep(e) {
     if ((s + e.section.cpOffset) % cpRate === 0) {
       const dir = e.prevLeadDir || (Math.random() < 0.5 ? 1 : -1);
       e.cpDeg = Math.max(0, Math.min(6, e.cpDeg - dir * pick([1, 1, 2])));
-      // Occasionally snap to a chord tone in the lower register
-      if (Math.random() < 0.35) {
+      // Snap to a chord tone — more aggressively when texture is sparse.
+      const cpSnapP = d < 0.40 ? 0.72 : d < 0.70 ? 0.50 : 0.35;
+      if (Math.random() < cpSnapP) {
         const target = (chord.r + pick(chord.iv)) % 12;
         let best = e.cpDeg, bestDist = 99;
         for (let deg = 0; deg <= 6; deg++) {
@@ -784,7 +805,8 @@ function scheduleStep(e) {
 // UI wiring
 // ============================================================================
 let engine = null, timer = null, playing = false;
-let urgency = 0, volume = 0.7; // urgency maps directly onto STATES tiers
+let urgency = Math.min(7, parseInt(localStorage.getItem("vp_urgency") || "0", 10));
+let volume = 0.7; // urgency maps directly onto STATES tiers
 let goMode = false, modeIdx = 0;
 let hue = STATES[0].hue;
 
@@ -838,26 +860,17 @@ function notifyNative(isPlaying) {
   }
 }
 
-// Build urgency bar once
-(function() {
-  const bar = $("urgBar");
-  const abbr = ["zen","fcs","flw","drv","srg","crs","ovr","mlt"];
-  STATES.forEach((st, i) => {
-    const btn = document.createElement("button");
-    btn.className = "urg-seg";
-    btn.textContent = abbr[i] || st.key.slice(0,3);
-    btn.setAttribute("aria-label", st.key);
-    btn.addEventListener("click", () => { if (!goMode) { urgency = i; update(); } });
-    bar.appendChild(btn);
-  });
-})();
+$("urgSlider").addEventListener("input", (ev) => {
+  if (!goMode) { urgency = parseInt(ev.target.value, 10); update(); }
+});
 
 function update() {
   const st = STATES[urgency];
+  localStorage.setItem("vp_urgency", urgency);
   $("vibeName").textContent = st.key;
   $("trackName").textContent = st.track;
-  $("trackSub").textContent = "procedural synthwave \u00B7 " + st.bpm + " bpm";
-  document.querySelectorAll(".urg-seg").forEach((el, i) => el.classList.toggle("active", i === urgency));
+  $("trackSub").textContent = "procedural synthwave · " + st.bpm + " bpm";
+  $("urgSlider").value = urgency;
   if (engine) {
     engine.target = Object.assign({}, st);
     engine.tierIdx = urgency;
@@ -880,7 +893,7 @@ $("modeNext").addEventListener("click", () => setMode(modeIdx + 1));
 $("goBtn").addEventListener("click", () => {
   goMode = !goMode;
   $("goBtn").classList.toggle("active", goMode);
-  document.querySelectorAll(".urg-seg").forEach(el => el.classList.toggle("go-lock", goMode));
+  $("urgSlider").disabled = goMode;
   $("paceHint").textContent = goMode ? "◎ calibrating…" : "";
   if (window.AndroidBridge?.setGoMode) window.AndroidBridge.setGoMode(goMode);
 });
@@ -1029,28 +1042,17 @@ playBtn.addEventListener("click", () => {
   const proj3 = (px,py,pz) => { const s=FOV/(FOV+pz); return [VCX+px*s, VCY+py*s, s]; };
 
   // --- Scene objects & stars ------------------------------------
-  // Each racer gets ONE constant speed for its whole life, set at spawn
-  // relative to the camera speed at that moment. The mix shifts with
-  // urgency: at rest it's a languid pack around our own pace; at high
-  // speed the pack centre drops well below us (we race above the
-  // traffic, overtaking most of it) and speedsters get rarer - but the
-  // few there are still scream past at 1.6-2.15x.
-  //   urg=0: 25% speedsters, pack 0.60-1.20x
-  //   urg=7: ~8% speedsters, pack ~0.15-0.85x
-  // Default z chosen by speed: slow racers materialise beyond the fog
-  // wall (invisible) and fade in from the vanishing point as we close
-  // in; fast racers enter close behind and overtake us.
   function spawnObj(i, z, f) {
     const lane = (Math.random() * LANES.length) | 0;
     const spdShare = Math.max(0.08, 0.25 - urg * 0.025);
     const center = 0.90 - urg * 0.07;
     const spread = 0.30 + urg * 0.02;
     const fBase = f !== undefined ? f : (Math.random() < spdShare
-      ? 1.6 + Math.random() * 0.55                                    // speedster
-      : Math.max(0.15, center + (Math.random() - 0.5) * 2 * spread)); // pack
+      ? 1.6 + Math.random() * 0.55
+      : Math.max(0.15, center + (Math.random() - 0.5) * 2 * spread));
     const defZ = fBase < 1.0
-      ? 1950 + Math.random() * 200    // slow: hidden in the fog ahead
-      : Z_NEAR + Math.random() * 200; // fast: close, it'll overtake us
+      ? 1950 + Math.random() * 200
+      : Z_NEAR + Math.random() * 200;
     return {
       sh:   SHAPES[i % SHAPES.length],
       lane, x: LANES[lane],
@@ -1064,8 +1066,6 @@ playBtn.addEventListener("click", () => {
     };
   }
   const objs  = Array.from({length:9}, (_,i) => spawnObj(i));
-  // Lead-melody notes queued by leadNote() with their audio timestamps;
-  // each one fires a pulse on a racer the moment it becomes audible.
   const vizN = window._vizNotes = [];
   const stars = Array.from({length:100}, () => ({
     x: (Math.random()-0.5)*1400,
@@ -1078,11 +1078,9 @@ playBtn.addEventListener("click", () => {
     if (!W) return;
     urg = u || 0;
     cx2.clearRect(0, 0, W, H);
-    // Exponential speed curve: 4.5 at zen, ~27 at meltdown (6× range)
     camSpd = 4.5 * Math.pow(6, urg / 7);
     dist += camSpd;
 
-    // Stars — sky only (above horizon); streak speed tied to camSpd
     stars.forEach(st => {
       st.z -= camSpd * 0.52;
       if (st.z < 5) { st.z=1600; st.x=(Math.random()-0.5)*1400; st.y=-(55+Math.random()*280); }
@@ -1093,13 +1091,11 @@ playBtn.addEventListener("click", () => {
       cx2.beginPath(); cx2.arc(sx, sy, Math.max(sc*3.2, 0.4), 0, 6.28); cx2.fill();
     });
 
-    // Ground plane — infinitely wide, dark fill below the horizon
     const sNear = FOV / (FOV + Z_NEAR);
     const sFar  = FOV / (FOV + Z_FAR);
     cx2.fillStyle = '#08061a';
     cx2.fillRect(0, VCY, W, H - VCY);
 
-    // Cross-lines — full width, fixed world spacing, flying past at camSpd
     for (let z = Z_NEAR + GAP - dist % GAP; z <= Z_FAR; z += GAP) {
       const sc = FOV / (FOV + z);
       const yl = VCY + ROAD_Y * sc;
@@ -1109,10 +1105,9 @@ playBtn.addEventListener("click", () => {
       cx2.beginPath(); cx2.moveTo(0, yl); cx2.lineTo(W, yl); cx2.stroke();
     }
 
-    // Longitudinal grid lines — converge on the vanishing point
     const maxWx = Math.ceil((W * 0.5 / sNear + GAP) / GAP) * GAP;
     for (let wx = -maxWx; wx <= maxWx; wx += GAP) {
-      const cf = 1 - Math.min(Math.abs(wx) / maxWx, 1) * 0.45; // dim outer lines
+      const cf = 1 - Math.min(Math.abs(wx) / maxWx, 1) * 0.45;
       cx2.strokeStyle = `hsla(${h},80%,60%,${(0.22 * cf).toFixed(2)})`;
       cx2.lineWidth = 0.7;
       cx2.beginPath();
@@ -1121,7 +1116,6 @@ playBtn.addEventListener("click", () => {
       cx2.stroke();
     }
 
-    // Fog at horizon — covers the vanishing zone
     const fogSpan = Math.max(12, ROAD_Y * sNear * 0.20);
     const fogGrad = cx2.createLinearGradient(0, VCY - 2, 0, VCY + fogSpan);
     fogGrad.addColorStop(0,    `hsla(${h},40%,6%,0.92)`);
@@ -1130,7 +1124,6 @@ playBtn.addEventListener("click", () => {
     cx2.fillStyle = fogGrad;
     cx2.fillRect(0, VCY - 2, W, fogSpan + 2);
 
-    // Horizon scan-line
     const scanA = 0.13 + 0.07*Math.sin(Date.now()*0.0009);
     const hg = cx2.createLinearGradient(0, 0, W, 0);
     hg.addColorStop(0,   `hsla(${h},100%,70%,0)`);
@@ -1143,8 +1136,6 @@ playBtn.addEventListener("click", () => {
     cx2.beginPath(); cx2.moveTo(0, VCY); cx2.lineTo(W, VCY); cx2.stroke();
     cx2.restore();
 
-    // Melody → racer pulses. Notes are scheduled ahead of time; fire each
-    // pulse when its note actually sounds. Pitch picks the racer.
     if (typeof engine !== 'undefined' && engine) {
       const now = engine.ctx.currentTime;
       for (let i = vizN.length - 1; i >= 0; i--) {
@@ -1156,7 +1147,6 @@ playBtn.addEventListener("click", () => {
       if (vizN.length > 64) vizN.splice(0, vizN.length - 64);
     }
 
-    // Wireframe racers — constant speed each; lane changes only when blocked
     objs.forEach((obj, oi) => {
       obj.pulse *= 0.91;
 
@@ -1168,7 +1158,7 @@ playBtn.addEventListener("click", () => {
           l >= 0 && l < LANES.length &&
           !objs.some(o => o !== obj && o.lane === l && Math.abs(o.z - obj.z) < 320));
         if (free.length) { obj.lane = free[(Math.random()*free.length)|0]; }
-        obj.cool = 240;   // long cooldown keeps overtakes rare
+        obj.cool = 240;
       }
 
       obj.x += (LANES[obj.lane] - obj.x) * 0.03;
@@ -1176,15 +1166,10 @@ playBtn.addEventListener("click", () => {
       obj.ax += obj.dax; obj.ay += obj.day; obj.az += obj.daz;
 
       if (obj.z < Z_NEAR * 0.3 || (obj.z > 1900 && obj.spd > camSpd)) {
-        // we passed it, or it outran us into the fog — replacement drawn
-        // from the current urgency mix; its speed decides where it enters
-        // (slow: beyond the fog ahead, fast: close behind to pass us).
-        // Slow racers above the fog line are still inbound, not culled.
         Object.assign(obj, spawnObj(oi));
       }
       if (obj.z <= 1) return;
 
-      // Object center sits just above road surface; melody pulse swells it
       const pz = obj.pulse;
       const drawSz = obj.sz * (1 + pz * 0.45);
       const wy = ROAD_Y - drawSz * 1.2;
