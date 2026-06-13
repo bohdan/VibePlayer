@@ -805,7 +805,8 @@ function scheduleStep(e) {
 // UI wiring
 // ============================================================================
 let engine = null, timer = null, playing = false;
-let urgency = 0, volume = 0.7; // urgency maps directly onto STATES tiers
+let urgency = Math.min(7, parseInt(localStorage.getItem("vp_urgency") || "0", 10));
+let volume = 0.7; // urgency maps directly onto STATES tiers
 let goMode = false, modeIdx = 0;
 let hue = STATES[0].hue;
 
@@ -865,6 +866,7 @@ $("urgSlider").addEventListener("input", (ev) => {
 
 function update() {
   const st = STATES[urgency];
+  localStorage.setItem("vp_urgency", urgency);
   $("vibeName").textContent = st.key;
   $("trackName").textContent = st.track;
   $("trackSub").textContent = "procedural synthwave \u00B7 " + st.bpm + " bpm";
